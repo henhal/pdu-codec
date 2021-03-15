@@ -37,7 +37,7 @@ export default class PduBuilder {
     throw new Error(message);
   }
 
-  private number(value: number, bits: 8 | 16) {
+  private writeNumber(value: number, bits: 8 | 16) {
     if (bits === 8) {
       this.buf.writeUint8(value);
     } else if (bits === 16) {
@@ -179,7 +179,7 @@ export default class PduBuilder {
       if (strBuf.length < minLength || strBuf.length > maxLength) {
         throw new Error(`Invalid string length ${strBuf.length}`);
       }
-      this.number(strBuf.length, lengthBits);
+      this.writeNumber(strBuf.length, lengthBits);
     }
 
     this.buf.append(strBuf);
@@ -207,7 +207,7 @@ export default class PduBuilder {
         this.fail(`Invalid data length ${hexBuf.length}; expected [${minLength}..${maxLength}]`);
       }
 
-      this.number(hexBuf.length, lengthBits);
+      this.writeNumber(hexBuf.length, lengthBits);
     }
 
     if (hexBuf.length > 0) {
