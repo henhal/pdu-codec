@@ -1,14 +1,17 @@
 import ByteBuffer from "bytebuffer";
+import {BitLength, Endian, Word} from './types';
 
 type Dict<K extends string = string> = Record<K, unknown>;
 
 type Reader<T, U extends Dict, V extends Dict> = (x: T, value: V) => U | void;
 
+type ReaderOrPropertyName<T, U extends Dict, V extends Dict> = Reader<T, U, V> | (keyof U & string);
+
 function simpleReader<T, U extends Dict, V extends Dict>(propertyName: keyof U): Reader<T, U, V> {
   return (x: T) => ({[propertyName]: x} as U);
 }
 
-function getReader<T, U extends Dict, V extends Dict>(readerOrPropertyName: Reader<T, U, V> | keyof U) {
+function getReader<T, U extends Dict, V extends Dict>(readerOrPropertyName: ReaderOrPropertyName<T, U, V>) {
   return typeof readerOrPropertyName === 'string' ?
       simpleReader<T, U, V>(readerOrPropertyName) :
       readerOrPropertyName as Reader<T, U, V>;
@@ -21,185 +24,222 @@ function getReader<T, U extends Dict, V extends Dict>(readerOrPropertyName: Read
 export default class PduParser<T extends Dict = Dict> {
   private readonly buf: ByteBuffer;
 
+  readonly endian: Endian;
+
   /**
    * The current value produced by merging all records returned by the reader callbacks.
    */
   value: T;
 
-  private constructor(data: string, value: T) {
-    this.buf = ByteBuffer.wrap(data, 'hex');
-    this.value = value;
+  private constructor(hex: string, {target, endian}: {target: T, endian: Endian}) {
+    this.buf = ByteBuffer.wrap(hex, 'hex', endian === Endian.LITTLE, false);
+    this.value = target;
+    this.endian = endian;
   }
 
   /**
    * Create a parser from the given hex string
-   * @param data Hex data to parse
-   * @param [value] Optional initial value
+   * @param hex Hex data to parse
+   * @param options Options
+   * @param [options.target = {}] Initial target object
+   * @param [options.endian = Endian.BIG] Endian
    * @returns PduParser for the given data
    */
-  static parse<T extends Dict = Dict<never>>(data: string, value: T = {} as T): PduParser<T> {
-    return new PduParser(data, value);
+  static parse<T extends Dict = Dict<never>>(hex: string, {
+    target = {} as T,
+    endian = Endian.BIG
+  }: {
+    target: T,
+    endian: Endian
+  }): PduParser<T> {
+    return new PduParser(hex, {target, endian});
   }
 
-  private parse<U extends Dict>(value: U | void): PduParser<T & U> {
+  private fail(message: string): never {
+    throw new Error(message);
+  }
+
+  private assign<U extends Dict>(value: U | void): PduParser<T & U> {
     Object.assign(this.value, value);
 
     return this as PduParser<T & U>;
   }
 
-  private readNumber(bits: 8 | 16): number {
-    if (bits === 8) {
-      return this.buf.readUint8();
-    } else if (bits === 16) {
-      this.buf.readUint16();
+  private readNumber(bits: BitLength): number {
+    switch (bits) {
+      case 8:
+        return this.buf.readUint8();
+      case 16:
+        return this.buf.readUint16();
+      case 32:
+        return this.buf.readUint32();
+      default:
+        this.fail('Invalid number of bits');
     }
-    throw new Error('Invalid number of bits');
   }
 
-  private parseNumber<U extends Dict>(
-      readerOrProperty: Reader<number, U, T> | keyof U,
-      bits: 8 | 16
+  private readNumbers<U extends Dict, B extends BitLength>(
+      bits: B,
+      ...args: [ReaderOrPropertyName<Word<B>, U, T>] | [number, ReaderOrPropertyName<Array<Word<B>>, U, T>]
   ): PduParser<T & U> {
-    // const reader = typeof readerOrProperty === 'string' ?
-    //     simpleReader<number, U, T>(readerOrProperty) :
-    //     readerOrProperty as Reader<number, U, T>;
+    if (typeof args[0] === 'number') {
+      const [count, arrayReader] = args as [number, ReaderOrPropertyName<number[], U, T>];
+      const values = [];
 
-    return this.parse(getReader(readerOrProperty)(this.readNumber(bits), this.value));
-  }
+      for (let i = 0; i < count; i++) {
+        values.push(this.readNumber(bits));
+      }
 
-  private parseNumbers<U extends Dict>(
-      count:  number,
-      readerOrProperty: Reader<number[], U, T> | keyof U,
-      bits: 8 | 16
-  ): PduParser<T & U> {
-    const values = [];
-    for (let i = 0; i < count; i++) {
-      values.push(this.readNumber(bits));
+      return this.assign(getReader(arrayReader)(values, this.value));
     }
 
-    // const reader = typeof arrayReader === 'string' ?
-    //     simpleReader<number[], U, T>(arrayReader) :
-    //     arrayReader as Reader<number[], U, T>;
+    const [reader] = args as [ReaderOrPropertyName<number, U, T>];
 
-    return this.parse(getReader(readerOrProperty)(values, this.value));
+    return this.assign(getReader(reader)(this.readNumber(bits), this.value));
   }
 
   /**
-   * From the buffer, read a single byte and parse it as an unsigned 8-bit number.
-   * @param reader Reader to convert number into record
+   * From the buffer, read a single unsigned word of the given bit length.
+   * @param bits   Number of bits per number
+   * @param reader Word reader
    */
-  uint8<U extends Dict>(reader: Reader<number, U, T> | keyof U): PduParser<T & U>;
+  number<U extends Dict, B extends BitLength>(
+      bits: B,
+      reader: ReaderOrPropertyName<Word<B>, U, T>
+  ): PduParser<T & U>;
 
   /**
-   * From the buffer, read count bytes and parse it as an array of unsigned 8-bit numbers.
-   * @param count Number of bytes to read
-   * @param reader Reader to convert array of numbers into record
+   * From the buffer, read "count" words of the given bit length.
+   * @param bits   Number of bits per number
+   * @param count  Number of words to read
+   * @param reader Word array reader
    */
-  uint8<U extends Dict>(count: number, reader: Reader<number[], U, T> | keyof U): PduParser<T & U>;
+  number<U extends Dict, B extends BitLength>(
+      bits: B,
+      count: number,
+      reader: ReaderOrPropertyName<Array<Word<B>>, U, T>
+  ): PduParser<T & U>;
+
+  number<U extends Dict, B extends BitLength>(
+      bits: B,
+      ...args: [ReaderOrPropertyName<Word<B>, U, T>] | [number, ReaderOrPropertyName<Array<Word<B>>, U, T>]
+  ): PduParser<T & U> {
+    return this.readNumbers(bits, ...args);
+  }
+
+  /**
+   * From the buffer, read a single unsigned byte
+   * @param reader Byte reader
+   */
+  uint8<U extends Dict>(
+      reader: ReaderOrPropertyName<Word<8>, U, T>
+  ): PduParser<T & U>;
+
+  /**
+   * From the buffer, read "count" unsigned bytes
+   * @param count  Number of bytes to read
+   * @param reader Byte array reader
+   */
+  uint8<U extends Dict>(
+      count: number,
+      reader: ReaderOrPropertyName<Array<Word<8>>, U, T>
+  ): PduParser<T & U>;
 
   uint8<U extends Dict>(
-      readerOrCount: Reader<number, U, T> | keyof U | number,
-      arrayReader?: Reader<number[], U, T> | keyof U
+      ...args: [ReaderOrPropertyName<Word<8>, U, T>] | [number, ReaderOrPropertyName<Array<Word<8>>, U, T>]
   ): PduParser<T & U> {
-    if (typeof readerOrCount === 'number') {
-      // const count = readerOrCount;
-      // Only to please the compiler, if readerOrCount is a number arrayReader must be defined
-      if (!arrayReader) throw new Error('Missing reader');
-
-      return this.parseNumbers(readerOrCount, arrayReader!, 8);
-
-      // const values = [];
-      // for (let i = 0; i < count; i++) {
-      //   values.push(this.buf.readUint8());
-      // }
-      //
-      // const reader = typeof arrayReader === 'string' ?
-      //     simpleReader<number[], U, T>(arrayReader) :
-      //     arrayReader as Reader<number[], U, T>;
-      //
-      // return this.parse(reader(values, this.value));
-    }
-
-    return this.parseNumber(readerOrCount, 8);
-
-    // const reader = typeof readerOrCount === 'string' ?
-    //     simpleReader<number, U, T>(readerOrCount) :
-    //     readerOrCount as Reader<number, U, T>;
-    //
-    // return this.parse(reader(this.buf.readUint8(), this.value));
+    return this.readNumbers(8, ...args);
   }
 
   /**
-   * From the buffer, read a single byte and parse it as an unsigned 8-bit number.
-   * @param reader Reader to convert number into record
+   * From the buffer, read a single unsigned 16-bit word
+   * @param reader Word reader
    */
-  uint16<U extends Dict>(reader: Reader<number, U, T> | keyof U): PduParser<T & U>;
+  uint16<U extends Dict>(reader: ReaderOrPropertyName<number, U, T>): PduParser<T & U>;
 
   /**
-   * From the buffer, read count bytes and parse it as an array of unsigned 8-bit numbers.
-   * @param count Number of bytes to read
-   * @param reader Reader to convert array of numbers into record
+   * From the buffer, read "count" unsigned 16-bit words
+   * @param count  Number of words to read
+   * @param reader Word array reader
    */
-  uint16<U extends Dict>(count: number, reader: Reader<number[], U, T> | keyof U): PduParser<T & U>;
+  uint16<U extends Dict>(count: number, reader: ReaderOrPropertyName<number[], U, T>): PduParser<T & U>;
 
-  uint16<U extends Dict>(readerOrCount: Reader<number, U, T> | keyof U | number,
-                         arrayReader?: Reader<number[], U, T> | keyof U): PduParser<T & U> {
-    if (typeof readerOrCount === 'number') {
-      // Only to please the compiler, if readerOrCount is a number arrayReader must be defined
-      if (!arrayReader) throw new Error('Missing reader');
-
-      return this.parseNumbers(readerOrCount, arrayReader!, 16);
-    }
-
-    return this.parseNumber(readerOrCount, 16);
+  uint16<U extends Dict>(
+      ...args: [ReaderOrPropertyName<number, U, T>] | [number, ReaderOrPropertyName<number[], U, T>]
+  ): PduParser<T & U> {
+    return this.readNumbers(16, ...args);
   }
 
   /**
-   * From the buffer, read a length byte followed by <length> bytes.
-   * Parse it as a UTF-8 string of the given length.
+   * From the buffer, read a single unsigned 32-bit word
+   * @param reader Word reader
+   */
+  uint32<U extends Dict>(reader: ReaderOrPropertyName<number, U, T>): PduParser<T & U>;
+
+  /**
+   * From the buffer, read "count" unsigned 32-bit words
+   * @param count  Number of words to read
+   * @param reader Word array reader
+   */
+  uint32<U extends Dict>(count: number, reader: ReaderOrPropertyName<number[], U, T>): PduParser<T & U>;
+
+  uint32<U extends Dict>(
+      ...args: [ReaderOrPropertyName<number, U, T>] | [number, ReaderOrPropertyName<number[], U, T>]
+  ): PduParser<T & U> {
+    return this.readNumbers(32, ...args);
+  }
+
+  /**
+   * From the buffer, read a string, optionally preceded by a length word of given bit length and parse it as UTF-8.
    * @param reader Reader to convert string into record
    * @param options Options
-   * @param [options.lengthBits] Number of bits to use for length
+   * @param [options.lengthBits] Number of bits in length word
    * @param [options.nullTerminate] Whether to string is terminated with null byte
    */
-  utf8<U extends Dict>(reader: Reader<string, U, T>, {
+  string<U extends Dict>(reader: Reader<string, U, T>, {
     lengthBits = 8,
     nullTerminate = false,
   }: {
-    lengthBits?: 0 | 8 | 16;
+    lengthBits?: BitLength;
     nullTerminate?: boolean;
   } = {}): PduParser<T & U> {
     let str: string;
+
     if (lengthBits) {
       const len = this.readNumber(lengthBits);
       str = this.buf.readUTF8String(len);
     } else if (nullTerminate) {
-      // TODO parse string until null
-      throw new Error('TODO');
+      str = this.buf.readCString();
     } else {
-      throw new Error('Cannot parse string without length or null terminator');
+      this.fail('Cannot parse string without length or null terminator');
     }
 
-    return this.parse(reader(str, this.value));
+    return this.assign(reader(str, this.value));
   }
 
   /**
    * From the buffer, read a length byte followed by <length> bytes.
-   * Parse it as a hex string of the given length-
+   * Parse it as a hex string of the given length.
    * @param reader Reader to convert hex string into record
    * @param options Options
-   * @param [options.lengthBits] Number of bits to use for length
+   * @param [options.lengthBits] Number of bits in length word; 0 for no length word
+   * @param [options.length]     Number of bytes to read; required if no length word is present
    */
   hex<U extends Dict>(reader: Reader<string, U, T>, {
     lengthBits = 8,
+    length,
   }: {
-    lengthBits?: 8 | 16;
+    lengthBits?: BitLength;
+    length?: number;
   } = {}): PduParser<T & U> {
-    const len = this.readNumber(lengthBits);
+    const len = lengthBits ? this.readNumber(lengthBits) : length;
+
+    if (typeof len !== 'number') this.fail(`Must provide length or length bits`);
+
     const value = len > 0 ?
         this.buf.readBytes(len).buffer.toString('hex') :
         '';
 
-    return this.parse(reader(value, this.value));
+    return this.assign(reader(value, this.value));
   }
 }

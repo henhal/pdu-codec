@@ -1,20 +1,28 @@
 import ByteBuffer from "bytebuffer";
 import {parseHex} from "./utils";
+import {BitLength, Endian, Word} from './types';
 
-enum Endian {
-  BIG,
-  LITTLE
+function getMaxValue(bits: number, maxBits = 32) {
+  return (1 << (bits || maxBits)) - 1;
 }
 
 /**
  * An APDU builder with chainable write methods
  */
 export default class PduBuilder {
-  private readonly buf;
+  private readonly buf: ByteBuffer;
   private readonly marks: Record<string, number> = {};
   private _length = 0;
+
   readonly endian: Endian;
 
+  /**
+   * Constructor
+   * @param [options] Options
+   * @param [options.initialSize = 20] Initial size of the backing buffer, in bytes
+   * @param [options.limit] Max number of bytes allowed in this PDU, default no limit
+   * @param [options.endian = Endian.BIG] Endian
+   */
   constructor(
       {
         initialSize = 20,
@@ -28,7 +36,7 @@ export default class PduBuilder {
     this.buf = ByteBuffer.allocate(initialSize, endian === Endian.LITTLE, false);
     this.endian = endian;
 
-    if (limit !== undefined) {
+    if (typeof limit === 'number') {
       this.buf.limit = limit;
     }
   }
@@ -37,11 +45,20 @@ export default class PduBuilder {
     throw new Error(message);
   }
 
-  private writeNumber(value: number, bits: 8 | 16) {
-    if (bits === 8) {
-      this.buf.writeUint8(value);
-    } else if (bits === 16) {
-      this.buf.writeUint16(value);
+  private writeNumber<B extends BitLength>(value: Word<B>, bits: B) {
+    const max = getMaxValue(bits);
+
+    if (value < 0 || value > max) this.fail(`Invalid uint${bits} value ${value}`);
+
+    switch (bits) {
+      case 8:
+        return this.buf.writeUint8(value);
+      case 16:
+        return this.buf.writeUint16(value);
+      case 32:
+        return this.buf.writeUint32(value);
+      default:
+        throw new Error(`Invalid bit length ${bits}`);
     }
   }
 
@@ -117,47 +134,57 @@ export default class PduBuilder {
   }
 
   /**
+   * Write one or more unsigned numbers with the specified bit length per number
+   * @param bits   Number of bits per number
+   * @param values Unsigned byte values
+   */
+  number<B extends BitLength>(bits: B, ...values: Array<Word<B>>): this {
+    for (const value of values) {
+      this.writeNumber(value, bits);
+    }
+    return this;
+  }
+
+  /**
    * Write one or more unsigned bytes
    * @param values Unsigned byte values
    */
-  uint8(...values: number[]): this {
-    for (const value of values) {
-      if (value < 0 || value > 0xFF) this.fail(`Invalid uint8 value ${value}`);
-
-      this.buf.writeUint8(value);
-    }
-    return this;
+  uint8(...values: Array<Word<8>>): this {
+    return this.number(8, ...values);
   }
 
   /**
    * Write one or more unsigned 16-bit words
    * @param values Unsigned 16-bit words
    */
-  uint16(...values: number[]): this {
-    for (const value of values) {
-      if (value < 0 || value > 0xFFFF) this.fail(`Invalid uint16 value ${value}`);
+  uint16(...values: Array<Word<16>>): this {
+    return this.number(16, ...values);
+  }
 
-      this.buf.writeUint16(value);
-    }
-    return this;
+  /**
+   * Write one or more unsigned 32-bit words
+   * @param values Unsigned 16-bit words
+   */
+  uint32(...values: Array<Word<32>>): this {
+    return this.number(32, ...values);
   }
 
   /**
    * Write a string as UTF-8, optionally preceded by its length
    * @param str String
    * @param options Options
-   * @param [options.lengthBits] Number of bits to use for length
+   * @param [options.lengthBits] Number of bits to use for length word
    * @param [options.minLength] Minimum length of the UTF-8 encoded string in bytes
    * @param [options.maxLength] Maximum length of the UTF-8 encoded string in bytes
    * @param [options.nullTerminate] Whether to add a null byte after the string
    */
-  utf8(str: string, {
+  string(str: string, {
     lengthBits = 8,
     minLength = 0,
-    maxLength = (1 << lengthBits) - 1,
+    maxLength = getMaxValue(lengthBits),
     nullTerminate = false,
   }: {
-    lengthBits?: 0 | 8 | 16;
+    lengthBits?: BitLength | 0;
     minLength?: number;
     maxLength?: number;
     nullTerminate?: boolean;
@@ -166,47 +193,58 @@ export default class PduBuilder {
       this.fail(`Invalid string ${str}`);
     }
 
-    if (minLength < 0 || maxLength > 0xFF || maxLength < minLength) {
+    if (minLength < 0 || maxLength > getMaxValue(lengthBits) || maxLength < minLength) {
       throw new Error(`Invalid min or max length`);
     }
 
     // Since the string must be encoded as UTF-8, the byte length may not be equal to the code point length,
     // so we use a separate buffer in order to properly get the byte length
-    const strBuf = ByteBuffer.allocate(str.length, this.endian === Endian.LITTLE, false)
-        .writeUTF8String(str).buffer;
-
-    if (lengthBits) {
-      if (strBuf.length < minLength || strBuf.length > maxLength) {
-        throw new Error(`Invalid string length ${strBuf.length}`);
-      }
-      this.writeNumber(strBuf.length, lengthBits);
-    }
-
-    this.buf.append(strBuf);
+    const strBuf = ByteBuffer.allocate(str.length, this.endian === Endian.LITTLE, false);
 
     if (nullTerminate) {
-      this.buf.writeUint8(0x00);
+      strBuf.writeCString(str);
+    } else {
+      strBuf.writeUTF8String(str);
     }
+    strBuf.flip();
+    const strLength = strBuf.limit;
+
+    if (strLength < minLength || strLength > maxLength) {
+      throw new Error(`Invalid string length ${strLength}; expected [${minLength}..${maxLength}]`);
+    }
+
+    if (lengthBits) {
+      this.writeNumber(strLength, lengthBits);
+    }
+    this.buf.append(strBuf);
+
     return this;
   }
 
+  /**
+   * Write a hex string as bytes to the buffer, optionally preceded by a word containing the length of the bytes.
+   * @param hex The string
+   * @param [options] Options
+   * @param [options.lengthBits] Number of bits to use for length word; 0 for no length word
+   * @param [options.minLength]  Minimum length of the data in bytes
+   * @param [options.maxLength]  Maximum length of the data in bytes
+   */
   hex(hex: string | Buffer, {
-        lengthBits = 8,
-        minLength = 0,
-        maxLength = (1 << lengthBits) - 1,
-      }: {
-        lengthBits?: 8 | 16;
-        minLength?: number;
-        maxLength?: number;
-      } = {},
-  ): this {
+    lengthBits = 8,
+    minLength = 0,
+    maxLength = getMaxValue(lengthBits)
+  }: {
+    lengthBits?: BitLength | 0;
+    minLength?: number;
+    maxLength?: number;
+  } = {}): this {
     const hexBuf = typeof hex === 'string' ? parseHex(hex) : hex;
 
-    if (lengthBits) {
-      if (hexBuf.length < minLength || hexBuf.length > maxLength) {
-        this.fail(`Invalid data length ${hexBuf.length}; expected [${minLength}..${maxLength}]`);
-      }
+    if (hexBuf.length < minLength || hexBuf.length > maxLength) {
+      this.fail(`Invalid data length ${hexBuf.length}; expected [${minLength}..${maxLength}]`);
+    }
 
+    if (lengthBits) {
       this.writeNumber(hexBuf.length, lengthBits);
     }
 
