@@ -16,6 +16,22 @@ const pdu = new PduBuilder()
   .build()
 ```
 
+Resulting PDU:
+```
+                          ┌ 8-bit length of 'world'
+                          │
+                          │  ┌ 'world'                     ┌ 32-bit length of hex 'abcdef'
+                          │  │          ┌ 0xcafe           │
+                          │  │          │                  │        ┌ hex 'abcdef'
+4142 0007 68656c6c6f2c20 05 776f726c64 cafe 6162636465 00 00000003 abcdef
+ │    │    │                                 │         │
+ │    │    └ 'hello, '                       │         │
+ │    │                                      │         └ null terminator of 'abcde'
+ │    └ 16-bit length of 'hello, '           └ 'abcde'
+ │
+ └ uint8 [0x41, 0x42]
+```
+
 Bookmarks can be set to enable going back to fill in data:
 ```
 const pdu = new PduBuilder()
@@ -42,14 +58,28 @@ const obj = PduParser.parse('1177cafebabe056162636465')
   .value; 
 ```
 
-Here, each value is passed to a function that returns an object which is merged with the current value of the parser, 
+This PDU is parsed as:
+
+```
+               ┌ length of string 'abcde'
+               │
+               │  ┌ string 'abcde'
+               │  │
+1177 cafebabe 05 6162636465
+ │    │
+ │    └ uint8 [0xca, 0xfe, 0xba, 0xbe]
+ │
+ └ uint16 0x1177
+```
+
+Each value is parsed by passing the value to a function that returns an object which is merged with the current value of the parser,
 resulting in:
 
 ```
 {
   word: 0x1177,
   bytes: [0xca, 0xfe, 0xba, 0xbe],
-  foo: 'abcde
+  foo: 'abcde'
 }
 ```
 
