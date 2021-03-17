@@ -1,20 +1,18 @@
 import ByteBuffer from "bytebuffer";
-import {BitLength, Endian, Word} from './types';
+import {BitLength, Endian, Hex, Word} from './types';
 
 type Dict<K extends string = string> = Record<K, unknown>;
 
 type Reader<T, U extends Dict, V extends Dict> = (x: T, value: V) => U | void;
 
-type ReaderOrPropertyName<T, U extends Dict, V extends Dict> = Reader<T, U, V> | (keyof U & string);
-
 function simpleReader<T, U extends Dict, V extends Dict>(propertyName: keyof U): Reader<T, U, V> {
   return (x: T) => ({[propertyName]: x} as U);
 }
 
-function getReader<T, U extends Dict, V extends Dict>(readerOrPropertyName: ReaderOrPropertyName<T, U, V>) {
-  return typeof readerOrPropertyName === 'string' ?
-      simpleReader<T, U, V>(readerOrPropertyName) :
-      readerOrPropertyName as Reader<T, U, V>;
+function getReader<T, U extends Dict, V extends Dict, K extends string>(arg: Reader<T, U, V> | K) {
+  return typeof arg === 'string' ?
+      simpleReader<T, U, V>(arg) :
+      arg as Reader<T, U, V>;
 }
 
 /**
@@ -31,7 +29,7 @@ export default class PduParser<V extends Dict = Dict> {
    */
   value: V;
 
-  private constructor(hex: string, {target, endian}: {target: V, endian: Endian}) {
+  private constructor(hex: Hex, {target, endian}: {target: V, endian: Endian}) {
     this.buf = ByteBuffer.wrap(hex, 'hex', endian === Endian.LITTLE, false);
     this.value = target;
     this.endian = endian;
@@ -59,7 +57,9 @@ export default class PduParser<V extends Dict = Dict> {
     throw new Error(message);
   }
 
-  private assign<U extends Dict>(value: U | void): PduParser<V & U> {
+  private parse<T, U extends Dict, K extends string>(reader: Reader<T, U, V> | K, data: T): PduParser<V & U> {
+      const value = getReader(reader)(data, this.value);
+
     Object.assign(this.value, value);
 
     return this as PduParser<V & U>;
@@ -83,19 +83,19 @@ export default class PduParser<V extends Dict = Dict> {
       ...args: [Reader<Word<B>, U, V> | K] | [number, Reader<Array<Word<B>>, U, V> | K]
   ): PduParser<V & U> {
     if (typeof args[0] === 'number') {
-      const [count, arrayReader] = args as [number, ReaderOrPropertyName<number[], U, V>];
+      const [count, arrayReader] = args as [number, Reader<number[], U, V> | K];
       const values = [];
 
       for (let i = 0; i < count; i++) {
         values.push(this.readNumber(bits));
       }
 
-      return this.assign(getReader(arrayReader)(values, this.value));
+      return this.parse(arrayReader, values);
     }
 
-    const [reader] = args as [ReaderOrPropertyName<number, U, V>];
+    const [reader] = args as [Reader<number, U, V> | K];
 
-    return this.assign(getReader(reader)(this.readNumber(bits), this.value));
+    return this.parse(reader, this.readNumber(bits));
   }
 
   /**
@@ -183,7 +183,7 @@ export default class PduParser<V extends Dict = Dict> {
   uint8<K extends string>(
       count: number,
       propertyName: K
-  ): PduParser<V & Record<K, Word<8>>>;
+  ): PduParser<V & Record<K, Array<Word<8>>>>;
 
   uint8<U extends Dict, K extends string>(
       ...args: [Reader<Word<8>, U, V> | K] | [number, Reader<Array<Word<8>>, U, V> | K]
@@ -225,7 +225,7 @@ export default class PduParser<V extends Dict = Dict> {
   uint16<K extends string>(
       count: number,
       propertyName: K
-  ): PduParser<V & Record<K, Word<16>>>;
+  ): PduParser<V & Record<K, Array<Word<16>>>>;
 
   uint16<U extends Dict, K extends string>(
       ...args: [Reader<Word<16>, U, V> | K] | [number, Reader<Array<Word<16>>, U, V> | K]
@@ -267,7 +267,7 @@ export default class PduParser<V extends Dict = Dict> {
   uint32<K extends string>(
       count: number,
       propertyName: K
-  ): PduParser<V & Record<K, Word<32>>>;
+  ): PduParser<V & Record<K, Array<Word<32>>>>;
 
   uint32<U extends Dict, K extends string>(
       ...args: [Reader<Word<32>, U, V> | K] | [number, Reader<Array<Word<32>>, U, V> | K]
@@ -317,7 +317,7 @@ export default class PduParser<V extends Dict = Dict> {
       this.fail('Cannot parse string without length or null terminator');
     }
 
-    return this.assign(getReader(reader)(str, this.value));
+    return this.parse(reader, str);
   }
 
   /**
@@ -328,7 +328,7 @@ export default class PduParser<V extends Dict = Dict> {
    * @param [options.lengthBits] Number of bits in length word; 0 for no length word
    * @param [options.length]     Number of bytes to read; required if no length word is present
    */
-  hex<U extends Dict>(reader: ReaderOrPropertyName<string, U, V>, options?: {
+  hex<U extends Dict>(reader: Reader<Hex, U, V>, options?: {
     lengthBits?: BitLength | 0;
     length?: number;
   }): PduParser<V & U>;
@@ -344,7 +344,7 @@ export default class PduParser<V extends Dict = Dict> {
   hex<K extends string>(propertyName: K, options?: {
     lengthBits?: BitLength | 0;
     length?: number;
-  }): PduParser<V & Record<K, string>>;
+  }): PduParser<V & Record<K, Hex>>;
 
   /**
    * From the buffer, read a length byte followed by <length> bytes.
@@ -354,7 +354,7 @@ export default class PduParser<V extends Dict = Dict> {
    * @param [options.lengthBits] Number of bits in length word; 0 for no length word
    * @param [options.length]     Number of bytes to read; required if no length word is present
    */
-  hex<U extends Dict, K extends string>(reader: Reader<string, U, V> | K, {
+  hex<U extends Dict, K extends string>(reader: Reader<Hex, U, V> | K, {
     lengthBits = 8,
     length,
   }: {
@@ -369,6 +369,6 @@ export default class PduParser<V extends Dict = Dict> {
         this.buf.readBytes(len).toString('hex') :
         '';
 
-    return this.assign(getReader(reader)(value, this.value));
+    return this.parse(reader, value);
   }
 }

@@ -1,11 +1,20 @@
-# pdu-codec
-A codec for easily converting between JavaScript objects and binary PDUs.
+# PDU codec
+A codec for easily converting between JavaScript objects and binary PDUs, with full TypeScript typings.
 
-## Building PDUs
+## Installation
+
+```
+$ npm install pdu-codec
+```
+## Usage
+
+### Building PDUs
 
 Example of building a PDU from some bytes, strings, 16-bit words and hex data:
 
 ```
+import {PduBuilder} from 'pdu-codec'; 
+
 const pdu = new PduBuilder()
   .uint8(65, 66)
   .string('hello, ', {lengthBits: 16})
@@ -34,6 +43,8 @@ Resulting PDU:
 
 Bookmarks can be set to enable going back to fill in data:
 ```
+import {PduBuilder} from 'pdu-codec'; 
+
 const pdu = new PduBuilder()
   .uint8(65, 66)
   .string('hello, ')
@@ -48,9 +59,11 @@ const pdu = new PduBuilder()
   .build()
 ```
 
-## Parsing PDUs
+### Parsing PDUs
 
 ```
+import {PduParser} from 'pdu-codec'; 
+
 const obj = PduParser.parse('1177cafebabe056162636465')
   .uint16(word => ({word}))
   .uint8(4, bytes => ({bytes}))
@@ -86,6 +99,8 @@ resulting in:
 For such simple mapping to property names, the property name can be passed instead of a function:
 
 ```
+import {PduParser} from 'pdu-codec'; 
+
 const obj = PduParser.parse('1177cafebabe056162636465')
   .uint16('word')
   .uint8(4, 'bytes')
@@ -96,6 +111,8 @@ const obj = PduParser.parse('1177cafebabe056162636465')
 For more advanced mapping, custom attributes may of course be produced:
 
 ```
+import {PduParser} from 'pdu-codec'; 
+
 const obj = PduParser.parse('666f6f2062617200002b')
   .string(s => {
      const [firstName, lastName] = s.split(' ');
@@ -120,6 +137,8 @@ Note that the parser fully types the complete value as it is parsed.
 Parser functions may however also return `void` if some external attribute is assigned instead:
 
 ```
+import {PduParser} from 'pdu-codec'; 
+
 let c: number;
 
 const obj = PduParser.parse('616263')
@@ -134,3 +153,39 @@ const obj = PduParser.parse('616263')
 In this case, `obj` will not include the found `63` which is assigned to the external variable `c` during parsing, 
 i.e., `value` will now be typed only as `{a: number; b: number}`.
 
+### Full encode/decode example
+
+Example of type safe encode/decode functions for an interface:
+
+```
+import PduBuilder from './PduBuilder';
+import PduParser from './PduParser';
+
+interface Data {
+  foo: string;
+  bar: number[];
+  baz: Buffer;
+}
+
+function encodeData(data: Data): string {
+  return new PduBuilder()
+      .string(data.foo)
+      .uint16(data.bar.length)
+      .uint16(...data.bar)
+      .hex(data.baz)
+      .build();
+}
+
+function decodeData(pdu: string): Data {
+  let barLength: number = 0;
+  
+  return PduParser.parse(pdu)
+      .string('foo')
+      .uint16((n, value) => {
+        barLength = n;
+      })
+      .uint16(barLength, 'bar')
+      .hex(hex => ({baz: Buffer.from(hex, 'hex')}))
+      .value;
+}
+```

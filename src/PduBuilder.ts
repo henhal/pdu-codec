@@ -1,6 +1,6 @@
 import ByteBuffer from "bytebuffer";
 import {parseHex} from "./utils";
-import {BitLength, Endian, Word} from './types';
+import {BitLength, Endian, Hex, Word} from './types';
 
 function getMaxValue(bits: number, maxBits = 32) {
   return Math.pow(2, bits || maxBits) - 1;
@@ -229,7 +229,7 @@ export default class PduBuilder {
    * @param [options.minLength]  Minimum length of the data in bytes
    * @param [options.maxLength]  Maximum length of the data in bytes
    */
-  hex(hex: string | Buffer, {
+  hex(hex: Hex | Buffer, {
     lengthBits = 8,
     minLength = 0,
     maxLength = getMaxValue(lengthBits)
@@ -255,7 +255,10 @@ export default class PduBuilder {
     return this;
   }
 
-  build(): string {
+  /**
+   * Build the PDU from the current buffer
+   */
+  build(): Hex {
     return this.buf.toHex(0, this.length);
   }
 }
