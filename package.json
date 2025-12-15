@@ -11,7 +11,7 @@
     "build": "tsc",
     "clean": "rm -rf dist",
     "lint": "eslint src --ext js,ts --max-warnings 0",
-    "prepublish": "tsc",
+    "prepack": "tsc",
     "test": "NODE_PATH=src LOG_LEVEL=${LOG_LEVEL:=error} jest --config src/test/jest.config.js"
   },
   "repository": {
