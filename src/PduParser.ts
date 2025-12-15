@@ -116,7 +116,7 @@ export default class PduParser<V extends Dict = Dict> {
   number<K extends string, B extends BitLength>(
       bits: B,
       propertyName: K
-  ): PduParser<V & Record<K, Word<B>>>;
+  ): PduParser<V & {[P in K]: Word<B>}>;
 
   /**
    * From the buffer, read "count" words of the given bit length.
@@ -140,7 +140,7 @@ export default class PduParser<V extends Dict = Dict> {
       bits: B,
       count: number,
       propertyName: K
-  ): PduParser<V & Record<K, Word<B>>>;
+  ): PduParser<V & {[P in K]: Word<B>}>;
 
   number<U extends Dict, K extends string, B extends BitLength>(
       bits: B,
@@ -163,7 +163,7 @@ export default class PduParser<V extends Dict = Dict> {
    */
   uint8<K extends string>(
       propertyName: K
-  ): PduParser<V & Record<K, Word<8>>>;
+  ): PduParser<V & {[P in K]: Word<8>}>;
 
   /**
    * From the buffer, read "count" unsigned bytes
@@ -183,7 +183,7 @@ export default class PduParser<V extends Dict = Dict> {
   uint8<K extends string>(
       count: number,
       propertyName: K
-  ): PduParser<V & Record<K, Array<Word<8>>>>;
+  ): PduParser<V & {[P in K]: Array<Word<8>>}>;
 
   uint8<U extends Dict, K extends string>(
       ...args: [Reader<Word<8>, U, V> | K] | [number, Reader<Array<Word<8>>, U, V> | K]
@@ -205,7 +205,7 @@ export default class PduParser<V extends Dict = Dict> {
    */
   uint16<K extends string>(
       propertyName: K
-  ): PduParser<V & Record<K, Word<16>>>;
+  ): PduParser<V & {[P in K]: Word<16>}>;
 
   /**
    * From the buffer, read "count" unsigned 16-bit words
@@ -225,7 +225,7 @@ export default class PduParser<V extends Dict = Dict> {
   uint16<K extends string>(
       count: number,
       propertyName: K
-  ): PduParser<V & Record<K, Array<Word<16>>>>;
+  ): PduParser<V & {[P in K]: Array<Word<16>>}>;
 
   uint16<U extends Dict, K extends string>(
       ...args: [Reader<Word<16>, U, V> | K] | [number, Reader<Array<Word<16>>, U, V> | K]
@@ -247,7 +247,7 @@ export default class PduParser<V extends Dict = Dict> {
    */
   uint32<K extends string>(
       propertyName: K
-  ): PduParser<V & Record<K, Word<32>>>;
+  ): PduParser<V & {[P in K]: Word<32>}>;
 
   /**
    * From the buffer, read "count" unsigned 32-bit words
@@ -267,7 +267,7 @@ export default class PduParser<V extends Dict = Dict> {
   uint32<K extends string>(
       count: number,
       propertyName: K
-  ): PduParser<V & Record<K, Array<Word<32>>>>;
+  ): PduParser<V & {[P in K]: Array<Word<32>>}>;
 
   uint32<U extends Dict, K extends string>(
       ...args: [Reader<Word<32>, U, V> | K] | [number, Reader<Array<Word<32>>, U, V> | K]
@@ -297,7 +297,7 @@ export default class PduParser<V extends Dict = Dict> {
   string<K extends string>(propertyName: K, options?: {
     lengthBits?: BitLength | 0;
     nullTerminate?: boolean;
-  }): PduParser<V & Record<K, string>>;
+  }): PduParser<V & {[P in K]: string}>;
 
   string<U extends Dict, K extends string>(reader: Reader<string, U, V> | K, {
     lengthBits = 8,
@@ -344,7 +344,7 @@ export default class PduParser<V extends Dict = Dict> {
   hex<K extends string>(propertyName: K, options?: {
     lengthBits?: BitLength | 0;
     length?: number;
-  }): PduParser<V & Record<K, Hex>>;
+  }): PduParser<V & {[P in K]: Hex}>;
 
   /**
    * From the buffer, read a length byte followed by <length> bytes.
