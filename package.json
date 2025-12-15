@@ -1,6 +1,6 @@
 {
   "name": "pdu-codec",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "PDU builder/parser",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
