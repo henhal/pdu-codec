@@ -1,11 +1,17 @@
+/* eslint-disable @typescript-eslint/ban-types */
 import ByteBuffer from "bytebuffer";
 import {BitLength, Endian, Hex, Word} from './types';
 
-type Dict<K extends string = string> = Record<K, unknown>;
+type Dict = object;
 
-type Reader<T, U extends Dict, V extends Dict> = (x: T, value: V) => U | void;
+type Reader<T, U extends Dict, V extends Dict> = (x: T, value: V, parser: PduParser) => U | void;
 
-function simpleReader<T, U extends Dict, V extends Dict>(propertyName: keyof U): Reader<T, U, V> {
+type EmptyObject = { }
+
+type Merge<T> = { [K in keyof T]: T[K] } & {};
+
+
+function simpleReader<T, U extends Dict, V extends Dict>(propertyName: string): Reader<T, U, V> {
   return (x: T) => ({[propertyName]: x} as U);
 }
 
@@ -15,11 +21,16 @@ function getReader<T, U extends Dict, V extends Dict, K extends string>(arg: Rea
       arg as Reader<T, U, V>;
 }
 
+export interface PduParserOptions<T extends EmptyObject> {
+  target: T,
+  endian: Endian;
+}
+
 /**
  * An APDU parser with chainable read methods building an object from the merged objects
  * returned from each reader callback.
  */
-export default class PduParser<V extends Dict = Dict> {
+export default class PduParser<V extends EmptyObject = EmptyObject> {
   private readonly buf: ByteBuffer;
 
   readonly endian: Endian;
@@ -29,7 +40,8 @@ export default class PduParser<V extends Dict = Dict> {
    */
   value: V;
 
-  private constructor(hex: Hex, {target, endian}: {target: V, endian: Endian}) {
+  private constructor(hex: Hex, options: PduParserOptions<V>) {
+    const {target, endian} = options;
     this.buf = ByteBuffer.wrap(hex, 'hex', endian === Endian.LITTLE, false);
     this.value = target;
     this.endian = endian;
@@ -43,13 +55,12 @@ export default class PduParser<V extends Dict = Dict> {
    * @param [options.endian = Endian.BIG] Endian
    * @returns PduParser for the given data
    */
-  static parse<T extends Dict = Dict<never>>(hex: string, {
-    target = {} as T,
-    endian = Endian.BIG
-  }: {
-    target?: T,
-    endian?: Endian
-  } = {}): PduParser<T> {
+  static parse<T extends EmptyObject = EmptyObject>(hex: string, options: Partial<PduParserOptions<T>> = {}): PduParser<T> {
+    const {
+      target = {} as T,
+      endian = Endian.BIG
+    } = options;
+
     return new PduParser(hex, {target, endian});
   }
 
@@ -57,12 +68,12 @@ export default class PduParser<V extends Dict = Dict> {
     throw new Error(message);
   }
 
-  private parse<T, U extends Dict, K extends string>(reader: Reader<T, U, V> | K, data: T): PduParser<V & U> {
-      const value = getReader(reader)(data, this.value);
+  private parse<T, U extends Dict, K extends string>(reader: Reader<T, U, V> | K, data: T): PduParser<Merge<V & U>> {
+    const value = getReader(reader)(data, this.value, this);
 
     Object.assign(this.value, value);
 
-    return this as PduParser<V & U>;
+    return this as any;
   }
 
   private readNumber(bits: BitLength): number {
@@ -81,7 +92,7 @@ export default class PduParser<V extends Dict = Dict> {
   private readNumbers<K extends string, U extends Dict, B extends BitLength>(
       bits: B,
       ...args: [Reader<Word<B>, U, V> | K] | [number, Reader<Array<Word<B>>, U, V> | K]
-  ): PduParser<V & U> {
+  ): PduParser<Merge<V & U>> {
     if (typeof args[0] === 'number') {
       const [count, arrayReader] = args as [number, Reader<number[], U, V> | K];
       const values = [];
@@ -106,7 +117,7 @@ export default class PduParser<V extends Dict = Dict> {
   number<U extends Dict, B extends BitLength>(
       bits: B,
       reader: Reader<Word<B>, U, V>
-  ): PduParser<V & U>;
+  ): PduParser<Merge<V & U>>;
 
   /**
    * From the buffer, read a single unsigned word of the given bit length.
@@ -116,7 +127,7 @@ export default class PduParser<V extends Dict = Dict> {
   number<K extends string, B extends BitLength>(
       bits: B,
       propertyName: K
-  ): PduParser<V & {[P in K]: Word<B>}>;
+  ): PduParser<Merge<V & {[P in K]: Word<B>}>>;
 
   /**
    * From the buffer, read "count" words of the given bit length.
@@ -128,7 +139,7 @@ export default class PduParser<V extends Dict = Dict> {
       bits: B,
       count: number,
       reader: Reader<Array<Word<B>>, U, V>
-  ): PduParser<V & U>;
+  ): PduParser<Merge<V & U>>;
 
   /**
    * From the buffer, read "count" words of the given bit length.
@@ -140,12 +151,12 @@ export default class PduParser<V extends Dict = Dict> {
       bits: B,
       count: number,
       propertyName: K
-  ): PduParser<V & {[P in K]: Word<B>}>;
+  ): PduParser<Merge<V & {[P in K]: Word<B>}>>;
 
   number<U extends Dict, K extends string, B extends BitLength>(
       bits: B,
       ...args: [Reader<Word<B>, U, V>] | [K] | [number, Reader<Array<Word<B>>, U, V>] | [number, K]
-  ): PduParser<V & U> {
+  ): PduParser<Merge<V & U>> {
     return this.readNumbers(bits, ...args);
   }
 
@@ -155,7 +166,7 @@ export default class PduParser<V extends Dict = Dict> {
    */
   uint8<U extends Dict>(
       reader: Reader<Word<8>, U, V>
-  ): PduParser<V & U>;
+  ): PduParser<Merge<V & U>>;
 
   /**
    * From the buffer, read a single unsigned byte
@@ -163,7 +174,7 @@ export default class PduParser<V extends Dict = Dict> {
    */
   uint8<K extends string>(
       propertyName: K
-  ): PduParser<V & {[P in K]: Word<8>}>;
+  ): PduParser<Merge<V & {[P in K]: Word<8>}>>;
 
   /**
    * From the buffer, read "count" unsigned bytes
@@ -173,7 +184,7 @@ export default class PduParser<V extends Dict = Dict> {
   uint8<U extends Dict>(
       count: number,
       reader: Reader<Array<Word<8>>, U, V>
-  ): PduParser<V & U>;
+  ): PduParser<Merge<V & U>>;
 
   /**
    * From the buffer, read "count" unsigned bytes
@@ -183,11 +194,11 @@ export default class PduParser<V extends Dict = Dict> {
   uint8<K extends string>(
       count: number,
       propertyName: K
-  ): PduParser<V & {[P in K]: Array<Word<8>>}>;
+  ): PduParser<Merge<V & {[P in K]: Array<Word<8>>}>>;
 
   uint8<U extends Dict, K extends string>(
       ...args: [Reader<Word<8>, U, V> | K] | [number, Reader<Array<Word<8>>, U, V> | K]
-  ): PduParser<V & U> {
+  ): PduParser<Merge<V & U>> {
     return this.readNumbers(8, ...args);
   }
 
@@ -197,7 +208,7 @@ export default class PduParser<V extends Dict = Dict> {
    */
   uint16<U extends Dict>(
       reader: Reader<Word<16>, U, V>
-  ): PduParser<V & U>;
+  ): PduParser<Merge<V & U>>;
 
   /**
    * From the buffer, read a single unsigned 16-bit word
@@ -205,7 +216,7 @@ export default class PduParser<V extends Dict = Dict> {
    */
   uint16<K extends string>(
       propertyName: K
-  ): PduParser<V & {[P in K]: Word<16>}>;
+  ): PduParser<Merge<V & {[P in K]: Word<16>}>>;
 
   /**
    * From the buffer, read "count" unsigned 16-bit words
@@ -215,7 +226,7 @@ export default class PduParser<V extends Dict = Dict> {
   uint16<U extends Dict>(
       count: number,
       reader: Reader<Array<Word<16>>, U, V>
-  ): PduParser<V & U>;
+  ): PduParser<Merge<V & U>>;
 
   /**
    * From the buffer, read "count" unsigned 16-bit words
@@ -225,11 +236,11 @@ export default class PduParser<V extends Dict = Dict> {
   uint16<K extends string>(
       count: number,
       propertyName: K
-  ): PduParser<V & {[P in K]: Array<Word<16>>}>;
+  ): PduParser<Merge<V & {[P in K]: Array<Word<16>>}>>;
 
   uint16<U extends Dict, K extends string>(
       ...args: [Reader<Word<16>, U, V> | K] | [number, Reader<Array<Word<16>>, U, V> | K]
-  ): PduParser<V & U> {
+  ): PduParser<Merge<V & U>> {
     return this.readNumbers(16, ...args);
   }
 
@@ -239,7 +250,7 @@ export default class PduParser<V extends Dict = Dict> {
    */
   uint32<U extends Dict>(
       reader: Reader<Word<32>, U, V>
-  ): PduParser<V & U>;
+  ): PduParser<Merge<V & U>>;
 
   /**
    * From the buffer, read a single unsigned 32-bit word
@@ -247,7 +258,7 @@ export default class PduParser<V extends Dict = Dict> {
    */
   uint32<K extends string>(
       propertyName: K
-  ): PduParser<V & {[P in K]: Word<32>}>;
+  ): PduParser<Merge<V & {[P in K]: Word<32>}>>;
 
   /**
    * From the buffer, read "count" unsigned 32-bit words
@@ -257,7 +268,7 @@ export default class PduParser<V extends Dict = Dict> {
   uint32<U extends Dict>(
       count: number,
       reader: Reader<Array<Word<32>>, U, V>
-  ): PduParser<V & U>;
+  ): PduParser<Merge<V & U>>;
 
   /**
    * From the buffer, read "count" unsigned 32-bit words
@@ -267,11 +278,11 @@ export default class PduParser<V extends Dict = Dict> {
   uint32<K extends string>(
       count: number,
       propertyName: K
-  ): PduParser<V & {[P in K]: Array<Word<32>>}>;
+  ): PduParser<Merge<V & {[P in K]: Array<Word<32>>}>>;
 
   uint32<U extends Dict, K extends string>(
       ...args: [Reader<Word<32>, U, V> | K] | [number, Reader<Array<Word<32>>, U, V> | K]
-  ): PduParser<V & U> {
+  ): PduParser<Merge<V & U>> {
     return this.readNumbers(32, ...args);
   }
 
@@ -285,7 +296,7 @@ export default class PduParser<V extends Dict = Dict> {
   string<U extends Dict>(reader: Reader<string, U, V>, options?: {
     lengthBits?: BitLength | 0;
     nullTerminate?: boolean;
-  }): PduParser<V & U>;
+  }): PduParser<Merge<V & U>>;
 
   /**
    * From the buffer, read a string, optionally preceded by a length word of given bit length and parse it as UTF-8.
@@ -297,7 +308,7 @@ export default class PduParser<V extends Dict = Dict> {
   string<K extends string>(propertyName: K, options?: {
     lengthBits?: BitLength | 0;
     nullTerminate?: boolean;
-  }): PduParser<V & {[P in K]: string}>;
+  }): PduParser<Merge<V & {[P in K]: string}>>;
 
   string<U extends Dict, K extends string>(reader: Reader<string, U, V> | K, {
     lengthBits = 8,
@@ -305,7 +316,7 @@ export default class PduParser<V extends Dict = Dict> {
   }: {
     lengthBits?: BitLength | 0;
     nullTerminate?: boolean;
-  } = {}): PduParser<V & U> {
+  } = {}): PduParser<Merge<V & U>> {
     let str: string;
 
     if (lengthBits) {
@@ -331,7 +342,7 @@ export default class PduParser<V extends Dict = Dict> {
   hex<U extends Dict>(reader: Reader<Hex, U, V>, options?: {
     lengthBits?: BitLength | 0;
     length?: number;
-  }): PduParser<V & U>;
+  }): PduParser<Merge<V & U>>;
 
   /**
    * From the buffer, read a length byte followed by <length> bytes.
@@ -344,7 +355,7 @@ export default class PduParser<V extends Dict = Dict> {
   hex<K extends string>(propertyName: K, options?: {
     lengthBits?: BitLength | 0;
     length?: number;
-  }): PduParser<V & {[P in K]: Hex}>;
+  }): PduParser<Merge<V & {[P in K]: Hex}>>;
 
   /**
    * From the buffer, read a length byte followed by <length> bytes.
@@ -360,7 +371,7 @@ export default class PduParser<V extends Dict = Dict> {
   }: {
     lengthBits?: BitLength | 0;
     length?: number;
-  } = {}): PduParser<V & U> {
+  } = {}): PduParser<Merge<V & U>> {
     const len = lengthBits ? this.readNumber(lengthBits) : length;
 
     if (typeof len !== 'number') this.fail(`Must provide length or length bits`);
