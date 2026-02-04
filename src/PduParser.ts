@@ -10,6 +10,9 @@ type EmptyObject = { }
 
 type Merge<T> = { [K in keyof T]: T[K] } & {};
 
+function error(message: string): never {
+  throw new Error(message);
+}
 
 function simpleReader<T, U extends Dict, V extends Dict>(propertyName: string): Reader<T, U, V> {
   return (x: T) => ({[propertyName]: x} as U);
@@ -24,6 +27,11 @@ function getReader<T, U extends Dict, V extends Dict, K extends string>(arg: Rea
 export interface PduParserOptions<T extends EmptyObject> {
   target: T,
   endian: Endian;
+}
+
+export interface PduParserRepeatOptions {
+  times?: number;
+  maxTimes?: number;
 }
 
 /**
@@ -79,11 +87,11 @@ export default class PduParser<V extends EmptyObject = EmptyObject> {
   private readNumber(bits: BitLength): number {
     switch (bits) {
       case 8:
-        return this.buf.readUint8();
+        return this.buf.readUint8() ?? error('Out of buffer');
       case 16:
-        return this.buf.readUint16();
+        return this.buf.readUint16() ?? error('Out of buffer');
       case 32:
-        return this.buf.readUint32();
+        return this.buf.readUint32() ?? error('Out of buffer');
       default:
         this.fail('Invalid number of bits');
     }
@@ -381,5 +389,35 @@ export default class PduParser<V extends EmptyObject = EmptyObject> {
         '';
 
     return this.parse(reader, value);
+  }
+
+  repeat<U>(loop: (parser: PduParser<V>) => PduParser<V & U> | null, options: PduParserRepeatOptions = {}): PduParser<Merge<V & U>> {
+    const {times, maxTimes} = options;
+    let i = 0;
+
+    while (true) {
+      if (times != null && i >= times) {
+        break;
+      }
+
+      if (maxTimes != null && i >= maxTimes) {
+        break;
+      }
+
+      try {
+        const result = loop(this);
+
+        if (result === null) {
+          break;
+        }
+        i++;
+      } catch (err) {
+        if (times != null && i < times) {
+          throw err;
+        }
+        break;
+      }
+    }
+    return this as any;
   }
 }

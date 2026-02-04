@@ -69,4 +69,50 @@ describe('PduParser tests', () => {
           hex: 'abcdef'
         });
   });
+
+  it.only('should branch parsing', () => {
+    // const value = PduParser.parse('0100e6021b0602bf070e43')
+    //     .uint8(function(x) {
+    //       let data: unknown;
+    //       switch (x) {
+    //         case 0x01:
+    //           this.uint16(value => {
+    //             data = value / 10;
+    //           });
+    //           return {temperature: data};
+    //           //return this.uint16(value => ({temperature: value / 10})).value;
+    //         case 0x02:
+    //           //return this.uint8('humidity').value;
+    //         default:
+    //           throw new Error();
+    //       }
+    //     })
+    //     .value;
+
+    const value = PduParser.parse('0100e6021b0602bf070e43')
+        // .uint8('foo')
+        // .uint16('bar')
+        .repeat(parser => parser
+            .uint8((type, _, parser) => {
+              switch (type) {
+                case 0x01:
+                  return parser.uint16(value => ({temperature: value / 10})).value;
+                case 0x02:
+                  return parser.uint8('humidity').value;
+                case 0x06:
+                  return parser.uint16(value => ({co2: value})).value;
+                case 0x07:
+                  return parser.uint16(value => ({internalVoltage: value})).value;
+                default:
+                  console.log('hmm', type)
+              }
+            }))
+        .value;
+
+    expect(value).toEqual({temperature: 23, humidity: 27, co2: 703, internalVoltage: 3651});
+
+
+
+    console.log(value);
+  })
 });
