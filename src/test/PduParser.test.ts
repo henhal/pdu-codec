@@ -90,8 +90,8 @@ describe('PduParser tests', () => {
     //     .value;
 
     const value = PduParser.parse('0100e6021b0602bf070e43')
-        // .uint8('foo')
-        // .uint16('bar')
+        .uint8('foo')
+        .uint16('bar')
         .repeat(parser => parser
             .uint8((type, _, parser) => {
               switch (type) {
@@ -104,7 +104,7 @@ describe('PduParser tests', () => {
                 case 0x07:
                   return parser.uint16(value => ({internalVoltage: value})).value;
                 default:
-                  console.log('hmm', type)
+                  throw new Error('Unexpected type byte');
               }
             }))
         .value;

@@ -6,10 +6,38 @@ type Dict = object;
 
 type Reader<T, U extends Dict, V extends Dict> = (x: T, value: V, parser: PduParser) => U | void;
 
-type EmptyObject = { }
+type EmptyObject = {}
 
 type Merge<T> = { [K in keyof T]: T[K] } & {};
 
+type DistributedKeys<T> = T extends any ? keyof T : never
+
+type ValueOf<T, K extends keyof any> =
+    T extends any
+        ? K extends keyof T
+            ? T[K]
+            : never
+        : never;
+
+type MergeUnion<T> = {
+  [P in DistributedKeys<T>]: P extends keyof T ? T[P] : ValueOf<T, P> | undefined;
+} & {};
+
+// type Test = {
+//   temperature: number;
+// } | {
+//   humidity: number;
+// } | {
+//   co2: number;
+// } | {
+//   internalVoltage: number;
+// };
+//
+// const foo: MergeUnion<Test> = {temperature: 42}
+
+// type Foo = {foo:string} | {bar: string; foo:string}
+// type Y = Merge2<Foo>
+// const y: Y = {foo: 'a', bar: undefined}
 function error(message: string): never {
   throw new Error(message);
 }
@@ -174,7 +202,7 @@ export default class PduParser<V extends EmptyObject = EmptyObject> {
    */
   uint8<U extends Dict>(
       reader: Reader<Word<8>, U, V>
-  ): PduParser<Merge<V & U>>;
+  ): PduParser<MergeUnion<V & U>>;
 
   /**
    * From the buffer, read a single unsigned byte
