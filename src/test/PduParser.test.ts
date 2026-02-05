@@ -92,21 +92,25 @@ describe('PduParser tests', () => {
     const value = PduParser.parse('0100e6021b0602bf070e43')
         .uint8('foo')
         .uint16('bar')
-        .repeat(parser => parser
+        .repeat(true, parser => parser
             .uint8((type, _, parser) => {
               switch (type) {
                 case 0x01:
-                  return parser.uint16(value => ({temperature: value / 10})).value;
+                  return parser.uint16(value => ({temperature: value / 10}));
                 case 0x02:
-                  return parser.uint8('humidity').value;
+                  return parser.uint8('humidity');
                 case 0x06:
-                  return parser.uint16(value => ({co2: value})).value;
+                  return parser.uint16(value => ({co2: value}));
                 case 0x07:
-                  return parser.uint16(value => ({internalVoltage: value})).value;
+                  return parser.uint16(value => ({internalVoltage: value}));
                 default:
                   throw new Error('Unexpected type byte');
               }
             }))
+        .uint8((value, _, parser) => {
+          return parser.uint8('hello')
+        })
+        .string('world', {lengthBits: 0, nullTerminate: true})
         .value;
 
     expect(value).toEqual({temperature: 23, humidity: 27, co2: 703, internalVoltage: 3651});
