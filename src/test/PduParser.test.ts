@@ -78,7 +78,7 @@ describe('PduParser tests', () => {
   });
 
   describe('branching', () => {
-    it('should repeat and branch parsing', () => {
+    it('should return a merged union when reading a number discriminator followed by mixed data', () => {
       const value = PduParser.parse('0100e6021b0602bf070e43')
           .uint8((type, _, parser) => {
             switch (type) {
@@ -117,7 +117,71 @@ describe('PduParser tests', () => {
 
       expect(value2).toEqual({humidity: 27});
     });
-  })
+
+    it('should return a merged union when reading a string discriminator followed by mixed data', () => {
+      const value = PduParser.parse('014161626364656600')
+          .string((type, _, parser) => {
+            switch (type) {
+              case 'A':
+                return parser.string('str1', {nullTerminate: true});
+              case 'B':
+                return parser.string('str2', {nullTerminate: true});
+              default:
+                throw new Error('Unexpected type byte');
+            }
+          })
+          .value;
+
+      expect(value).toEqual({str1: 'abcdef'});
+
+      const value2 = PduParser.parse('014261626364656600')
+          .string((type, _, parser) => {
+            switch (type) {
+              case 'A':
+                return parser.string('str1', {nullTerminate: true});
+              case 'B':
+                return parser.string('str2', {nullTerminate: true});
+              default:
+                throw new Error('Unexpected type byte');
+            }
+          })
+          .value;
+
+      expect(value2).toEqual({str2: 'abcdef'});
+    });
+
+    it('should return a merged union when reading a hex discriminator followed by mixed data', () => {
+      const value = PduParser.parse('014161626364656600')
+          .hex((type, _, parser) => {
+            switch (type) {
+              case '41':
+                return parser.string('str1', {nullTerminate: true});
+              case '42':
+                return parser.string('str2', {nullTerminate: true});
+              default:
+                throw new Error('Unexpected type byte');
+            }
+          })
+          .value;
+
+      expect(value).toEqual({str1: 'abcdef'});
+
+      const value2 = PduParser.parse('014261626364656600')
+          .hex((type, _, parser) => {
+            switch (type) {
+              case '41':
+                return parser.string('str1', {nullTerminate: true});
+              case '42':
+                return parser.string('str2', {nullTerminate: true});
+              default:
+                throw new Error('Unexpected type byte');
+            }
+          })
+          .value;
+
+      expect(value2).toEqual({str2: 'abcdef'});
+    });
+  });
 
   describe('repeating read sequences', () => {
     it('should repeat and branch parsing', () => {

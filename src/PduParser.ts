@@ -32,17 +32,23 @@ function getReader<T, U extends ReaderResult, V extends Dict, K extends string>(
       arg as Reader<T, U, V>;
 }
 
-export interface PduParserStringOptions {
-  lengthBits?: BitLength | 0;
-  nullTerminate?: boolean;
-}
-
 export interface PduParserOptions<T extends EmptyObject> {
   target: T,
   endian: Endian;
 }
 
-export interface PduParserRepeatOptions {
+
+export interface PduParserStringOptions {
+  lengthBits?: BitLength | 0;
+  nullTerminate?: boolean;
+}
+
+export interface PduParserHexOptions {
+  lengthBits?: BitLength | 0;
+  length?: number;
+}
+
+export interface PduParserRepeatConditions {
   times?: number;
   minTimes?: number;
   maxTimes?: number;
@@ -247,7 +253,7 @@ export default class PduParser<V extends EmptyObject = EmptyObject> {
   uint8<U extends ReaderResult>(
       count: number,
       reader: Reader<Array<Word<8>>, U, V>
-  ): PduParser<Merge<V & ReaderValue<U>>>;
+  ): PduParser<MergeUnion<V & ReaderValue<U>>>;
 
   /**
    * From the buffer, read "count" unsigned bytes
@@ -257,7 +263,7 @@ export default class PduParser<V extends EmptyObject = EmptyObject> {
   uint8<K extends string>(
       count: number,
       propertyName: K
-  ): PduParser<Merge<V & {[P in K]: Array<Word<8>>}>>;
+  ): PduParser<Merge<V & Record<K, Array<Word<8>>>>>;
 
   uint8<U extends ReaderResult, K extends string>(
       ...args: [Reader<Word<8>, U, V> | K] | [number, Reader<Array<Word<8>>, U, V> | K]
@@ -271,7 +277,7 @@ export default class PduParser<V extends EmptyObject = EmptyObject> {
    */
   uint16<U extends ReaderResult>(
       reader: Reader<Word<16>, U, V>
-  ): PduParser<Merge<V & ReaderValue<U>>>;
+  ): PduParser<MergeUnion<V & ReaderValue<U>>>;
 
   /**
    * From the buffer, read a single unsigned 16-bit word
@@ -289,7 +295,7 @@ export default class PduParser<V extends EmptyObject = EmptyObject> {
   uint16<U extends ReaderResult>(
       count: number,
       reader: Reader<Array<Word<16>>, U, V>
-  ): PduParser<Merge<V & ReaderValue<U>>>;
+  ): PduParser<MergeUnion<V & ReaderValue<U>>>;
 
   /**
    * From the buffer, read "count" unsigned 16-bit words
@@ -313,7 +319,7 @@ export default class PduParser<V extends EmptyObject = EmptyObject> {
    */
   uint32<U extends ReaderResult>(
       reader: Reader<Word<32>, U, V>
-  ): PduParser<Merge<V & ReaderValue<U>>>;
+  ): PduParser<MergeUnion<V & ReaderValue<U>>>;
 
   /**
    * From the buffer, read a single unsigned 32-bit word
@@ -331,7 +337,7 @@ export default class PduParser<V extends EmptyObject = EmptyObject> {
   uint32<U extends ReaderResult>(
       count: number,
       reader: Reader<Array<Word<32>>, U, V>
-  ): PduParser<Merge<V & ReaderValue<U>>>;
+  ): PduParser<MergeUnion<V & ReaderValue<U>>>;
 
   /**
    * From the buffer, read "count" unsigned 32-bit words
@@ -356,7 +362,10 @@ export default class PduParser<V extends EmptyObject = EmptyObject> {
    * @param [options.lengthBits] Number of bits in length word
    * @param [options.nullTerminate] Whether to string is terminated with null byte
    */
-  string<U extends ReaderResult>(reader: Reader<string, U, V>, options?: PduParserStringOptions): PduParser<Merge<V & ReaderValue<U>>>;
+  string<U extends ReaderResult>(
+      reader: Reader<string, U, V>,
+      options?: PduParserStringOptions
+  ): PduParser<MergeUnion<V & ReaderValue<U>>>;
 
   /**
    * From the buffer, read a string, optionally preceded by a length word of given bit length and parse it as UTF-8.
@@ -365,15 +374,18 @@ export default class PduParser<V extends EmptyObject = EmptyObject> {
    * @param [options.lengthBits] Number of bits in length word
    * @param [options.nullTerminate] Whether to string is terminated with null byte
    */
-  string<K extends string>(propertyName: K, options?: PduParserStringOptions): PduParser<Merge<V & {[P in K]: string}>>;
+  string<K extends string>(
+      propertyName: K,
+      options?: PduParserStringOptions
+  ): PduParser<Merge<V & {[P in K]: string}>>;
 
   string<U extends ReaderResult, K extends string>(
       reader: Reader<string, U, V> | K,
       options: PduParserStringOptions = {}
   ): PduParser<Merge<V & ReaderValue<U>>> {
     const {
-      lengthBits = 8,
       nullTerminate = false,
+      lengthBits = nullTerminate ? 0 : 8
     } = options;
     let str: string;
 
@@ -397,10 +409,10 @@ export default class PduParser<V extends EmptyObject = EmptyObject> {
    * @param [options.lengthBits] Number of bits in length word; 0 for no length word
    * @param [options.length]     Number of bytes to read; required if no length word is present
    */
-  hex<U extends ReaderResult>(reader: Reader<Hex, U, V>, options?: {
-    lengthBits?: BitLength | 0;
-    length?: number;
-  }): PduParser<Merge<V & ReaderValue<U>>>;
+  hex<U extends ReaderResult>(
+      reader: Reader<Hex, U, V>,
+      options?: PduParserHexOptions
+  ): PduParser<MergeUnion<V & ReaderValue<U>>>;
 
   /**
    * From the buffer, read a length byte followed by <length> bytes.
@@ -410,10 +422,7 @@ export default class PduParser<V extends EmptyObject = EmptyObject> {
    * @param [options.lengthBits] Number of bits in length word; 0 for no length word
    * @param [options.length]     Number of bytes to read; required if no length word is present
    */
-  hex<K extends string>(propertyName: K, options?: {
-    lengthBits?: BitLength | 0;
-    length?: number;
-  }): PduParser<Merge<V & {[P in K]: Hex}>>;
+  hex<K extends string>(propertyName: K, options?: PduParserHexOptions): PduParser<Merge<V & {[P in K]: Hex}>>;
 
   /**
    * From the buffer, read a length byte followed by <length> bytes.
@@ -423,13 +432,14 @@ export default class PduParser<V extends EmptyObject = EmptyObject> {
    * @param [options.lengthBits] Number of bits in length word; 0 for no length word
    * @param [options.length]     Number of bytes to read; required if no length word is present
    */
-  hex<U extends ReaderResult, K extends string>(reader: Reader<Hex, U, V> | K, {
-    lengthBits = 8,
-    length,
-  }: {
-    lengthBits?: BitLength | 0;
-    length?: number;
-  } = {}): PduParser<Merge<V & ReaderValue<U>>> {
+  hex<U extends ReaderResult, K extends string>(
+      reader: Reader<Hex, U, V> | K,
+      options: PduParserHexOptions = {}
+  ): PduParser<Merge<V & ReaderValue<U>>> {
+    const {
+      length,
+      lengthBits = length != null ? 0 : 8,
+    } = options;
     const len = lengthBits ? this.readNumber(lengthBits) : length;
 
     if (len == null) {
@@ -445,14 +455,17 @@ export default class PduParser<V extends EmptyObject = EmptyObject> {
 
   /**
    * Repeat a sequence of read methods according to the given conditions, until the callback returns null, or until the buffer is exhausted.
-   * @param options if true, no conditions - the sequence will be repeated forever until the callback returns null or the buffer is exhausted.
+   * @param conditions if true, no conditions - the sequence will be repeated forever until the callback returns null or the buffer is exhausted.
    * @param sequence A function receiving a parser object and returning that same object after performing some read operations; or null to break the sequence.
    */
-  repeat<U extends Dict>(options: PduParserRepeatOptions | true, sequence: PduParserRepeatSequence<V, U>): PduParser<Merge<V & U>> {
-    if (typeof options !== 'object') {
-      options = {};
+  repeat<U extends Dict>(
+      conditions: PduParserRepeatConditions | true,
+      sequence: PduParserRepeatSequence<V, U>
+  ): PduParser<Merge<V & U>> {
+    if (typeof conditions !== 'object') {
+      conditions = {};
     }
-    const {times, minTimes, maxTimes} = options;
+    const {times, minTimes, maxTimes} = conditions;
     let i = 0;
 
     while (true) {
