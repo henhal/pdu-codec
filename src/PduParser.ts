@@ -357,10 +357,11 @@ export default class PduParser<V extends EmptyObject = EmptyObject> {
 
   /**
    * From the buffer, read a string, optionally preceded by a length word of given bit length and parse it as UTF-8.
+   * If no options are given, an uint8 length is assumed to precede the string.
    * @param reader Reader to convert string into record
    * @param options Options
-   * @param [options.lengthBits] Number of bits in length word
-   * @param [options.nullTerminate] Whether to string is terminated with null byte
+   * @param [options.nullTerminate = false] Whether the string is terminated with null byte and has no length preceding it
+   * @param [options.lengthBits] Number of bits in length word, defaults to 8 if nullTerminate is false, otherwise 0
    */
   string<U extends ReaderResult>(
       reader: Reader<string, U, V>,
@@ -369,10 +370,11 @@ export default class PduParser<V extends EmptyObject = EmptyObject> {
 
   /**
    * From the buffer, read a string, optionally preceded by a length word of given bit length and parse it as UTF-8.
+   * If no options are given, an uint8 length is assumed to precede the string.
    * @param propertyName Name of property to write value to
    * @param options Options
-   * @param [options.lengthBits] Number of bits in length word
-   * @param [options.nullTerminate] Whether to string is terminated with null byte
+   * @param [options.nullTerminate = false] Whether the string is terminated with null byte and has no length preceding it
+   * @param [options.lengthBits] Number of bits in length word, defaults to 8 if nullTerminate is false, otherwise 0
    */
   string<K extends string>(
       propertyName: K,
@@ -404,9 +406,10 @@ export default class PduParser<V extends EmptyObject = EmptyObject> {
   /**
    * From the buffer, read a length byte followed by <length> bytes.
    * Parse it as a hex string of the given length.
+   * If no options are given, an uint8 length is assumed to precede the data bytes.
    * @param reader Reader to convert hex string into record, or name of property to write value to
    * @param options Options
-   * @param [options.lengthBits] Number of bits in length word; 0 for no length word
+   * @param [options.lengthBits] Number of bits in length word; 0 for no length word. Defaults to 8 if no length is given.
    * @param [options.length]     Number of bytes to read; required if no length word is present
    */
   hex<U extends ReaderResult>(
@@ -417,9 +420,10 @@ export default class PduParser<V extends EmptyObject = EmptyObject> {
   /**
    * From the buffer, read a length byte followed by <length> bytes.
    * Parse it as a hex string of the given length.
+   * If no options are given, an uint8 length is assumed to precede the data bytes.
    * @param propertyName Name of property to write value to
    * @param options Options
-   * @param [options.lengthBits] Number of bits in length word; 0 for no length word
+   * @param [options.lengthBits] Number of bits in length word; 0 for no length word. Defaults to 8 if no length is given.
    * @param [options.length]     Number of bytes to read; required if no length word is present
    */
   hex<K extends string>(propertyName: K, options?: PduParserHexOptions): PduParser<Merge<V & {[P in K]: Hex}>>;
@@ -427,9 +431,10 @@ export default class PduParser<V extends EmptyObject = EmptyObject> {
   /**
    * From the buffer, read a length byte followed by <length> bytes.
    * Parse it as a hex string of the given length.
+   * If no options are given, an uint8 length is assumed to precede the data bytes.
    * @param reader Reader to convert hex string into record, or name of property to write value to
    * @param options Options
-   * @param [options.lengthBits] Number of bits in length word; 0 for no length word
+   * @param [options.lengthBits] Number of bits in length word; 0 for no length word. Defaults to 8 if no length is given.
    * @param [options.length]     Number of bytes to read; required if no length word is present
    */
   hex<U extends ReaderResult, K extends string>(
