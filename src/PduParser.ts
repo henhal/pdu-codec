@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/ban-types */
 import ByteBuffer from "bytebuffer";
-import {BitLength, Endian, Hex, Word} from './types';
+import { BitLength, Endian, Hex, Word } from './types';
 
 type Dict = object;
 type EmptyObject = {}
@@ -22,10 +22,6 @@ type MergeUnion<T> = {
   [P in DistributedKeys<T>]: P extends keyof T ? T[P] : ValueOf<T, P> | undefined;
 } & {};
 
-function error(message: string): never {
-  throw new Error(message);
-}
-
 function simpleReader<T, U extends Dict, V extends Dict>(propertyName: string): Reader<T, U, V> {
   return (x: T) => ({[propertyName]: x} as U);
 }
@@ -36,6 +32,11 @@ function getReader<T, U extends ReaderResult, V extends Dict, K extends string>(
       arg as Reader<T, U, V>;
 }
 
+export interface PduParserStringOptions {
+  lengthBits?: BitLength | 0;
+  nullTerminate?: boolean;
+}
+
 export interface PduParserOptions<T extends EmptyObject> {
   target: T,
   endian: Endian;
@@ -43,17 +44,41 @@ export interface PduParserOptions<T extends EmptyObject> {
 
 export interface PduParserRepeatOptions {
   times?: number;
+  minTimes?: number;
   maxTimes?: number;
 }
 
+export type PduParserRepeatSequence<V extends Dict, U extends Dict> = (parser: PduParser<V>) => PduParser<V & U> | null;
+
+export class PduParserError extends Error {
+  constructor(message: string | undefined, readonly parser: PduParser) {
+    super(message);
+    this.name = this.constructor.name;
+  }
+}
+
 /**
- * An APDU parser with chainable read methods building an object from the merged objects
+ * A PDU parser with chainable read methods building an object from the merged objects
  * returned from each reader callback.
+ * All read methods may either be given a property name to write the result to, or a reader callback.
+ * The reader callback is called with the value read from the buffer, the current target object, and the parser itself,
+ * and may return either a new result object, or the parser itself after potentially reading additional values.
+ * The latter is useful for branching, e.g., reading different values depending on the contents of the previous value.
+ *
+ * If a sequence of read methods should be called multiple times, the repeat method may be used to chain multiple read
+ * methods together which will then be repeated according to the given options or until the buffer is exhausted.
  */
 export default class PduParser<V extends EmptyObject = EmptyObject> {
   private readonly buf: ByteBuffer;
 
   readonly endian: Endian;
+
+  /**
+   * Get the current offset in the buffer.
+   */
+  get offset(): number {
+    return this.buf.offset;
+  }
 
   /**
    * The current value produced by merging all records returned by the reader callbacks.
@@ -84,8 +109,8 @@ export default class PduParser<V extends EmptyObject = EmptyObject> {
     return new PduParser(hex, {target, endian});
   }
 
-  private fail(message: string): never {
-    throw new Error(message);
+  private fail(message?: string): never {
+    throw new PduParserError(message, this);
   }
 
   private parse<T, U extends ReaderResult, K extends string>(reader: Reader<T, U, V> | K, data: T): PduParser<Merge<V & ReaderValue<U>>> {
@@ -99,15 +124,19 @@ export default class PduParser<V extends EmptyObject = EmptyObject> {
   }
 
   private readNumber(bits: BitLength): number {
-    switch (bits) {
-      case 8:
-        return this.buf.readUint8() ?? error('Out of buffer');
-      case 16:
-        return this.buf.readUint16() ?? error('Out of buffer');
-      case 32:
-        return this.buf.readUint32() ?? error('Out of buffer');
-      default:
-        this.fail('Invalid number of bits');
+    try {
+      switch (bits) {
+        case 8:
+          return this.buf.readUint8() ?? this.fail();
+        case 16:
+          return this.buf.readUint16() ?? this.fail();
+        case 32:
+          return this.buf.readUint32() ?? this.fail();
+        default:
+          this.fail('Invalid number of bits');
+      }
+    } catch (err) {
+      this.fail(`Could not read uint${bits} at position ${this.offset}`);
     }
   }
 
@@ -129,6 +158,18 @@ export default class PduParser<V extends EmptyObject = EmptyObject> {
     const [reader] = args as [Reader<number, U, V> | K];
 
     return this.parse(reader, this.readNumber(bits));
+  }
+
+  private readString(strlen?: number) {
+    try {
+      if (strlen) {
+        return this.buf.readUTF8String(strlen, ByteBuffer.METRICS_BYTES);
+      } else {
+        return this.buf.readCString();
+      }
+    } catch (err) {
+      this.fail(`Could not read string at position ${this.offset}`);
+    }
   }
 
   /**
@@ -315,10 +356,7 @@ export default class PduParser<V extends EmptyObject = EmptyObject> {
    * @param [options.lengthBits] Number of bits in length word
    * @param [options.nullTerminate] Whether to string is terminated with null byte
    */
-  string<U extends ReaderResult>(reader: Reader<string, U, V>, options?: {
-    lengthBits?: BitLength | 0;
-    nullTerminate?: boolean;
-  }): PduParser<Merge<V & ReaderValue<U>>>;
+  string<U extends ReaderResult>(reader: Reader<string, U, V>, options?: PduParserStringOptions): PduParser<Merge<V & ReaderValue<U>>>;
 
   /**
    * From the buffer, read a string, optionally preceded by a length word of given bit length and parse it as UTF-8.
@@ -327,25 +365,23 @@ export default class PduParser<V extends EmptyObject = EmptyObject> {
    * @param [options.lengthBits] Number of bits in length word
    * @param [options.nullTerminate] Whether to string is terminated with null byte
    */
-  string<K extends string>(propertyName: K, options?: {
-    lengthBits?: BitLength | 0;
-    nullTerminate?: boolean;
-  }): PduParser<Merge<V & {[P in K]: string}>>;
+  string<K extends string>(propertyName: K, options?: PduParserStringOptions): PduParser<Merge<V & {[P in K]: string}>>;
 
-  string<U extends ReaderResult, K extends string>(reader: Reader<string, U, V> | K, {
-    lengthBits = 8,
-    nullTerminate = false,
-  }: {
-    lengthBits?: BitLength | 0;
-    nullTerminate?: boolean;
-  } = {}): PduParser<Merge<V & ReaderValue<U>>> {
+  string<U extends ReaderResult, K extends string>(
+      reader: Reader<string, U, V> | K,
+      options: PduParserStringOptions = {}
+  ): PduParser<Merge<V & ReaderValue<U>>> {
+    const {
+      lengthBits = 8,
+      nullTerminate = false,
+    } = options;
     let str: string;
 
     if (lengthBits) {
-      const len = this.readNumber(lengthBits);
-      str = this.buf.readUTF8String(len, ByteBuffer.METRICS_BYTES);
+      const strlen = this.readNumber(lengthBits);
+      str = this.readString(strlen);
     } else if (nullTerminate) {
-      str = this.buf.readCString();
+      str = this.readString();
     } else {
       this.fail('Cannot parse string without length or null terminator');
     }
@@ -396,7 +432,9 @@ export default class PduParser<V extends EmptyObject = EmptyObject> {
   } = {}): PduParser<Merge<V & ReaderValue<U>>> {
     const len = lengthBits ? this.readNumber(lengthBits) : length;
 
-    if (typeof len !== 'number') this.fail(`Must provide length or length bits`);
+    if (len == null) {
+      this.fail(`Must provide length or length bits`);
+    }
 
     const value = len > 0 ?
         this.buf.readBytes(len).toString('hex') :
@@ -405,32 +443,35 @@ export default class PduParser<V extends EmptyObject = EmptyObject> {
     return this.parse(reader, value);
   }
 
-  repeat<U extends Dict>(options: PduParserRepeatOptions | true, sequence: (parser: PduParser<V>) => PduParser<V & U> | null): PduParser<Merge<V & U>> {
+  /**
+   * Repeat a sequence of read methods according to the given conditions, until the callback returns null, or until the buffer is exhausted.
+   * @param options if true, no conditions - the sequence will be repeated forever until the callback returns null or the buffer is exhausted.
+   * @param sequence A function receiving a parser object and returning that same object after performing some read operations; or null to break the sequence.
+   */
+  repeat<U extends Dict>(options: PduParserRepeatOptions | true, sequence: PduParserRepeatSequence<V, U>): PduParser<Merge<V & U>> {
     if (typeof options !== 'object') {
       options = {};
     }
-    const {times, maxTimes} = options;
+    const {times, minTimes, maxTimes} = options;
     let i = 0;
 
     while (true) {
-      if (times != null && i >= times) {
-        break;
-      }
-
-      if (maxTimes != null && i >= maxTimes) {
+      if (i === times || i === maxTimes) {
         break;
       }
 
       try {
         const result = sequence(this);
+        i++;
 
         if (result === null) {
           break;
         }
-        i++;
       } catch (err) {
-        if (times != null && i < times) {
-          throw err;
+        if (times != null && i !== times) {
+          this.fail(`Repeat sequence failed after ${i} iterations with condition times=${times}`);
+        } else if (minTimes != null && i < minTimes) {
+          this.fail(`Repeat sequence failed after ${i} iterations with condition minTimes=${minTimes}`);
         }
         break;
       }
