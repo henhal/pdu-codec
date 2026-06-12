@@ -6,7 +6,7 @@ type Dict = object;
 type EmptyObject = {}
 
 type ReaderResult = Dict | PduParser;
-type Reader<T, U extends ReaderResult, V extends Dict> = (x: T, value: V, parser: PduParser) => U | void;
+type Reader<T, U extends ReaderResult, V extends Dict, P extends PduParser<V, any[]>> = (x: T, value: V, parser: P) => U | void;
 type ReaderValue<U extends ReaderResult> = U extends PduParser<infer V> ? V : U;
 
 type Merge<T> = { [K in keyof T]: T[K] } & {};
@@ -22,14 +22,18 @@ type MergeUnion<T> = {
   [P in DistributedKeys<T>]: P extends keyof T ? T[P] : ValueOf<T, P> | undefined;
 } & {};
 
-function simpleReader<T, U extends Dict, V extends Dict>(propertyName: string): Reader<T, U, V> {
+type PushedStack<S extends any[], V> = [...S, V];
+type PoppedValue<S extends any[]> = S extends [infer E] ? E : EmptyObject;
+type PoppedStack<S extends any[]> = S extends [any, ...infer R] ? R : [];
+
+function simpleReader<T, U extends Dict, V extends Dict, P extends PduParser<V, any[]>>(propertyName: string): Reader<T, U, V, P> {
   return (x: T) => ({[propertyName]: x} as U);
 }
 
-function getReader<T, U extends ReaderResult, V extends Dict, K extends string>(arg: Reader<T, U, V> | K) {
+function getReader<T, U extends ReaderResult, V extends Dict, P extends PduParser<V, any[]>, K extends string>(arg: Reader<T, U, V, P> | K) {
   return typeof arg === 'string' ?
-      simpleReader<T, U, V>(arg) :
-      arg as Reader<T, U, V>;
+      simpleReader<T, U, V, P>(arg) :
+      arg as Reader<T, U, V, P>;
 }
 
 export interface PduParserOptions<T extends EmptyObject> {
@@ -54,10 +58,10 @@ export interface PduParserRepeatConditions {
   maxTimes?: number;
 }
 
-export type PduParserRepeatSequence<V extends Dict, U extends Dict> = (parser: PduParser<V>) => PduParser<V & U> | null;
+export type PduParserRepeatSequence<V extends Dict, U extends Dict, S extends any[]> = (parser: PduParser<V, S>) => PduParser<V & U, S> | null;
 
 export class PduParserError extends Error {
-  constructor(message: string | undefined, readonly parser: PduParser) {
+  constructor(message: string | undefined, readonly parser: PduParser<any, any>) {
     super(message);
     this.name = this.constructor.name;
   }
@@ -74,7 +78,7 @@ export class PduParserError extends Error {
  * If a sequence of read methods should be called multiple times, the repeat method may be used to chain multiple read
  * methods together which will then be repeated according to the given options or until the buffer is exhausted.
  */
-export default class PduParser<V extends EmptyObject = EmptyObject, S extends EmptyObject = EmptyObject> {
+export default class PduParser<V extends EmptyObject = EmptyObject, S extends any[] = []> {
   private readonly buf: ByteBuffer;
 
   readonly endian: Endian;
@@ -91,13 +95,13 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
    */
   value: V;
 
-  private value2: S;
+  private stack: S;
 
   private constructor(hex: Hex, options: PduParserOptions<V>) {
     const {target, endian} = options;
     this.buf = ByteBuffer.wrap(hex, 'hex', endian === Endian.LITTLE, false);
     this.value = target;
-    this.value2 = {} as S;
+    this.stack = [] as any;
     this.endian = endian;
   }
 
@@ -109,7 +113,7 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
    * @param [options.endian = Endian.BIG] Endian
    * @returns PduParser for the given data
    */
-  static parse<T extends EmptyObject = EmptyObject>(hex: string, options: Partial<PduParserOptions<T>> = {}): PduParser<T, S> {
+  static parse<T extends EmptyObject = EmptyObject>(hex: string, options: Partial<PduParserOptions<T>> = {}): PduParser<T> {
     const {
       target = {} as T,
       endian = Endian.BIG
@@ -122,8 +126,8 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
     throw new PduParserError(message, this);
   }
 
-  private parse<T, U extends ReaderResult, K extends string>(reader: Reader<T, U, V> | K, data: T): PduParser<Merge<V & ReaderValue<U>>, S> {
-    const value = getReader(reader)(data, this.value, this);
+  private parse<T, U extends ReaderResult, K extends string>(reader: Reader<T, U, V, this> | K, data: T): PduParser<Merge<V & ReaderValue<U>>, S> {
+    const value = getReader<T, U, V, this, K>(reader)(data, this.value, this);
 
     if (value != null && !(value instanceof PduParser)) {
       Object.assign(this.value, value);
@@ -151,10 +155,10 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
 
   private readNumbers<K extends string, U extends ReaderResult, B extends BitLength>(
       bits: B,
-      ...args: [Reader<Word<B>, U, V> | K] | [number, Reader<Array<Word<B>>, U, V> | K]
+      ...args: [Reader<Word<B>, U, V, this> | K] | [number, Reader<Array<Word<B>>, U, V, this> | K]
   ): PduParser<Merge<V & ReaderValue<U>>, S> {
     if (typeof args[0] === 'number') {
-      const [count, arrayReader] = args as [number, Reader<number[], U, V> | K];
+      const [count, arrayReader] = args as [number, Reader<number[], U, V, this> | K];
       const values = [];
 
       for (let i = 0; i < count; i++) {
@@ -164,7 +168,7 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
       return this.parse(arrayReader, values);
     }
 
-    const [reader] = args as [Reader<number, U, V> | K];
+    const [reader] = args as [Reader<number, U, V, this> | K];
 
     return this.parse(reader, this.readNumber(bits));
   }
@@ -188,8 +192,8 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
    */
   number<U extends ReaderResult, B extends BitLength>(
       bits: B,
-      reader: Reader<Word<B>, U, V>
-  ): PduParser<Merge<V & ReaderValue<U>>>;
+      reader: Reader<Word<B>, U, V, this>
+  ): PduParser<Merge<V & ReaderValue<U>>, S>;
 
   /**
    * From the buffer, read a single unsigned word of the given bit length.
@@ -199,7 +203,7 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
   number<K extends string, B extends BitLength>(
       bits: B,
       propertyName: K
-  ): PduParser<Merge<V & {[P in K]: Word<B>}>>;
+  ): PduParser<Merge<V & {[P in K]: Word<B>}>, S>;
 
   /**
    * From the buffer, read "count" words of the given bit length.
@@ -210,8 +214,8 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
   number<U extends ReaderResult, B extends BitLength>(
       bits: B,
       count: number,
-      reader: Reader<Array<Word<B>>, U, V>
-  ): PduParser<Merge<V & ReaderValue<U>>>;
+      reader: Reader<Array<Word<B>>, U, V, this>
+  ): PduParser<Merge<V & ReaderValue<U>>, S>;
 
   /**
    * From the buffer, read "count" words of the given bit length.
@@ -223,11 +227,11 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
       bits: B,
       count: number,
       propertyName: K
-  ): PduParser<Merge<V & {[P in K]: Word<B>}>>;
+  ): PduParser<Merge<V & {[P in K]: Word<B>}>, S>;
 
   number<U extends ReaderResult, K extends string, B extends BitLength>(
       bits: B,
-      ...args: [Reader<Word<B>, U, V>] | [K] | [number, Reader<Array<Word<B>>, U, V>] | [number, K]
+      ...args: [Reader<Word<B>, U, V, this>] | [K] | [number, Reader<Array<Word<B>>, U, V, this>] | [number, K]
   ): PduParser<Merge<V & ReaderValue<U>>, S> {
     return this.readNumbers(bits, ...args);
   }
@@ -237,8 +241,8 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
    * @param reader Byte reader
    */
   uint8<U extends ReaderResult>(
-      reader: Reader<Word<8>, U, V>
-  ): PduParser<MergeUnion<V & ReaderValue<U>>>;
+      reader: Reader<Word<8>, U, V, this>
+  ): PduParser<MergeUnion<V & ReaderValue<U>>, S>;
 
   /**
    * From the buffer, read a single unsigned byte
@@ -246,7 +250,7 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
    */
   uint8<K extends string>(
       propertyName: K
-  ): PduParser<Merge<V & Record<K, Word<8>>>>;
+  ): PduParser<Merge<V & Record<K, Word<8>>>, S>;
 
   /**
    * From the buffer, read "count" unsigned bytes
@@ -255,8 +259,8 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
    */
   uint8<U extends ReaderResult>(
       count: number,
-      reader: Reader<Array<Word<8>>, U, V>
-  ): PduParser<MergeUnion<V & ReaderValue<U>>>;
+      reader: Reader<Array<Word<8>>, U, V, this>
+  ): PduParser<MergeUnion<V & ReaderValue<U>>, S>;
 
   /**
    * From the buffer, read "count" unsigned bytes
@@ -266,10 +270,10 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
   uint8<K extends string>(
       count: number,
       propertyName: K
-  ): PduParser<Merge<V & Record<K, Array<Word<8>>>>>;
+  ): PduParser<Merge<V & Record<K, Array<Word<8>>>>, S>;
 
   uint8<U extends ReaderResult, K extends string>(
-      ...args: [Reader<Word<8>, U, V> | K] | [number, Reader<Array<Word<8>>, U, V> | K]
+      ...args: [Reader<Word<8>, U, V, this> | K] | [number, Reader<Array<Word<8>>, U, V, this> | K]
   ): PduParser<Merge<V & ReaderValue<U>>, S> {
     return this.readNumbers(8, ...args);
   }
@@ -279,8 +283,8 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
    * @param reader Byte reader
    */
   uint16<U extends ReaderResult>(
-      reader: Reader<Word<16>, U, V>
-  ): PduParser<MergeUnion<V & ReaderValue<U>>>;
+      reader: Reader<Word<16>, U, V, this>
+  ): PduParser<MergeUnion<V & ReaderValue<U>>, S>;
 
   /**
    * From the buffer, read a single unsigned 16-bit word
@@ -288,7 +292,7 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
    */
   uint16<K extends string>(
       propertyName: K
-  ): PduParser<Merge<V & {[P in K]: Word<16>}>>;
+  ): PduParser<Merge<V & {[P in K]: Word<16>}>, S>;
 
   /**
    * From the buffer, read "count" unsigned 16-bit words
@@ -297,8 +301,8 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
    */
   uint16<U extends ReaderResult>(
       count: number,
-      reader: Reader<Array<Word<16>>, U, V>
-  ): PduParser<MergeUnion<V & ReaderValue<U>>>;
+      reader: Reader<Array<Word<16>>, U, V, this>
+  ): PduParser<MergeUnion<V & ReaderValue<U>>, S>;
 
   /**
    * From the buffer, read "count" unsigned 16-bit words
@@ -308,10 +312,10 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
   uint16<K extends string>(
       count: number,
       propertyName: K
-  ): PduParser<Merge<V & {[P in K]: Array<Word<16>>}>>;
+  ): PduParser<Merge<V & {[P in K]: Array<Word<16>>}>, S>;
 
   uint16<U extends ReaderResult, K extends string>(
-      ...args: [Reader<Word<16>, U, V> | K] | [number, Reader<Array<Word<16>>, U, V> | K]
+      ...args: [Reader<Word<16>, U, V, this> | K] | [number, Reader<Array<Word<16>>, U, V, this> | K]
   ): PduParser<Merge<V & ReaderValue<U>>, S> {
     return this.readNumbers(16, ...args);
   }
@@ -321,8 +325,8 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
    * @param reader Byte reader
    */
   uint32<U extends ReaderResult>(
-      reader: Reader<Word<32>, U, V>
-  ): PduParser<MergeUnion<V & ReaderValue<U>>>;
+      reader: Reader<Word<32>, U, V, this>
+  ): PduParser<MergeUnion<V & ReaderValue<U>>, S>;
 
   /**
    * From the buffer, read a single unsigned 32-bit word
@@ -330,7 +334,7 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
    */
   uint32<K extends string>(
       propertyName: K
-  ): PduParser<Merge<V & {[P in K]: Word<32>}>>;
+  ): PduParser<Merge<V & {[P in K]: Word<32>}>, S>;
 
   /**
    * From the buffer, read "count" unsigned 32-bit words
@@ -339,8 +343,8 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
    */
   uint32<U extends ReaderResult>(
       count: number,
-      reader: Reader<Array<Word<32>>, U, V>
-  ): PduParser<MergeUnion<V & ReaderValue<U>>>;
+      reader: Reader<Array<Word<32>>, U, V, this>
+  ): PduParser<MergeUnion<V & ReaderValue<U>>, S>;
 
   /**
    * From the buffer, read "count" unsigned 32-bit words
@@ -350,10 +354,10 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
   uint32<K extends string>(
       count: number,
       propertyName: K
-  ): PduParser<Merge<V & {[P in K]: Array<Word<32>>}>>;
+  ): PduParser<Merge<V & {[P in K]: Array<Word<32>>}>, S>;
 
   uint32<U extends ReaderResult, K extends string>(
-      ...args: [Reader<Word<32>, U, V> | K] | [number, Reader<Array<Word<32>>, U, V> | K]
+      ...args: [Reader<Word<32>, U, V, this> | K] | [number, Reader<Array<Word<32>>, U, V, this> | K]
   ): PduParser<Merge<V & ReaderValue<U>>, S> {
     return this.readNumbers(32, ...args);
   }
@@ -367,9 +371,9 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
    * @param [options.lengthBits] Number of bits in length word, defaults to 8 if nullTerminate is false, otherwise 0
    */
   string<U extends ReaderResult>(
-      reader: Reader<string, U, V>,
+      reader: Reader<string, U, V, this>,
       options?: PduParserStringOptions
-  ): PduParser<MergeUnion<V & ReaderValue<U>>>;
+  ): PduParser<MergeUnion<V & ReaderValue<U>>, S>;
 
   /**
    * From the buffer, read a string, optionally preceded by a length word of given bit length and parse it as UTF-8.
@@ -382,10 +386,10 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
   string<K extends string>(
       propertyName: K,
       options?: PduParserStringOptions
-  ): PduParser<Merge<V & {[P in K]: string}>>;
+  ): PduParser<Merge<V & {[P in K]: string}>, S>;
 
   string<U extends ReaderResult, K extends string>(
-      reader: Reader<string, U, V> | K,
+      reader: Reader<string, U, V, this> | K,
       options: PduParserStringOptions = {}
   ): PduParser<Merge<V & ReaderValue<U>>, S> {
     const {
@@ -416,9 +420,9 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
    * @param [options.length]     Number of bytes to read; required if no length word is present
    */
   hex<U extends ReaderResult>(
-      reader: Reader<Hex, U, V>,
+      reader: Reader<Hex, U, V, this>,
       options?: PduParserHexOptions
-  ): PduParser<MergeUnion<V & ReaderValue<U>>>;
+  ): PduParser<MergeUnion<V & ReaderValue<U>>, S>;
 
   /**
    * From the buffer, read a length byte followed by <length> bytes.
@@ -429,7 +433,7 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
    * @param [options.lengthBits] Number of bits in length word; 0 for no length word. Defaults to 8 if no length is given.
    * @param [options.length]     Number of bytes to read; required if no length word is present
    */
-  hex<K extends string>(propertyName: K, options?: PduParserHexOptions): PduParser<Merge<V & {[P in K]: Hex}>>;
+  hex<K extends string>(propertyName: K, options?: PduParserHexOptions): PduParser<Merge<V & {[P in K]: Hex}>, S>;
 
   /**
    * From the buffer, read a length byte followed by <length> bytes.
@@ -441,7 +445,7 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
    * @param [options.length]     Number of bytes to read; required if no length word is present
    */
   hex<U extends ReaderResult, K extends string>(
-      reader: Reader<Hex, U, V> | K,
+      reader: Reader<Hex, U, V, this> | K,
       options: PduParserHexOptions = {}
   ): PduParser<Merge<V & ReaderValue<U>>, S> {
     const {
@@ -468,7 +472,7 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
    */
   repeat<U extends Dict>(
       conditions: PduParserRepeatConditions | true,
-      sequence: PduParserRepeatSequence<V, U>
+      sequence: PduParserRepeatSequence<V, U, S>
   ): PduParser<Merge<V & U>, S> {
     if (typeof conditions !== 'object') {
       conditions = {};
@@ -499,12 +503,72 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends Em
     }
     return this as any;
   }
-  
-  swap(): PduParser<S, V> {
-    const {value, value2} = this;
-    const ret = this as unknown as PduParser<S, V>;
-    ret.value = value2;
-    ret.value2 = value;
-    return ret;
+
+  /**
+   * Push the current value onto the stack and initialize an empty value.
+   * This can be used together with pop() to create temporary buffers which will then be used to
+   * write a complex value into the main buffer.
+   * It's possible to push multiple times onto the stack. Popping will always be done in the reverse order as pushed.
+   */
+  push(): PduParser<EmptyObject, PushedStack<S, V>> {
+    const parser = this as unknown as PduParser<EmptyObject, PushedStack<S, V>>;
+
+    parser.stack.push(this.value);
+    parser.value = {};
+
+    return parser;
   }
+
+  /**
+   * Read the current value into the property with the given name, then pop the stack
+   * @param propertyName Name of property to write value to
+   */
+  pop<K extends string>(
+      propertyName: K
+  ): PduParser<MergeUnion<PoppedValue<S> & Record<K, V>>, PoppedStack<S>>;
+
+  /**
+   * Read the current value using a reader, then pop the stack to resume the previous buffer.
+   * If no previous buffer is available, a new empty object is initialized.
+   * @param reader Reader that is fed the current value before it's popped out
+   */
+  pop<U extends ReaderResult>(
+      reader: Reader<V, U, PoppedValue<S>, PduParser<PoppedValue<S>, PoppedStack<S>>>
+  ): PduParser<MergeUnion<PoppedValue<S> & ReaderValue<U>>, PoppedStack<S>>;
+
+  pop<U extends ReaderResult, K extends string>(
+      reader: Reader<V, U, PoppedValue<S>, PduParser<PoppedValue<S>, PoppedStack<S>>> | K
+  ): PduParser<MergeUnion<PoppedValue<S> & ReaderValue<U>>, PoppedStack<S>> {
+    const parser = this as unknown as PduParser<PoppedValue<S>, PoppedStack<S>>;
+
+    const popped = parser.value;
+    parser.value = parser.stack.pop() ?? {};
+
+    return parser.parse(reader, popped);
+  }
+
+  array<U extends ReaderResult, K extends string, E extends EmptyObject>(
+      conditions: PduParserRepeatConditions | true,
+      sequence: PduParserRepeatSequence<EmptyObject, E, PushedStack<S, V>>,
+      reader: Reader<E[], U, V, this> | K
+  ): PduParser<Merge<V & ReaderValue<U>>, S> {
+    const items: E[] = [];
+
+    this.repeat(conditions, parser => {
+      const p2 = sequence(parser.push());
+
+      if (!p2) {
+        return null;
+      }
+
+      p2.pop(item => {
+        items.push(item);
+      });
+
+      return parser;
+    });
+    return this.parse<E[], U, K>(reader, items);
+  }
+
 }
+
