@@ -569,6 +569,5 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends an
     });
     return this.parse<E[], U, K>(reader, items);
   }
-
 }
 
