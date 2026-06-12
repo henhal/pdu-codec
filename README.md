@@ -153,6 +153,50 @@ const obj = PduParser.parse('616263')
 In this case, `obj` will not include the found `63` which is assigned to the external variable `c` during parsing, 
 i.e., `value` will now be typed only as `{a: number; b: number}`.
 
+### Using the buffer stack
+
+During parsing, the current decoded buffer value may be pushed onto a stack, which
+will initialize a new empty main buffer.
+This buffer may be used as a temporary buffer for parsing a sub-PDU, which may then be
+popped and written to the main buffer.
+
+This is for example useful for parsing PDUs that contain repeated sequences of PDUs to parse them into an array.
+
+Examples:
+
+```
+PduParser.parse('041111222233334444')
+    .uint8((times, _, parser) => {
+      const items = new Array<{ x: number; y: number }>();
+
+      parser.repeat({times}, parser => parser
+          .push()
+          .uint8('x')
+          .uint8('y')
+          .pop(item => {
+            items.push(item);
+          })
+      );
+      return {items};
+    })
+```
+
+There is also a convenience `array` method which uses `repeat` and the stack to read N identical items
+and putting them into an array like in the above example:
+
+```
+PduParser.parse('041111222233334444FF')
+    .uint8((times, _, parser) =>
+        parser.array(
+            {times},
+            p => p
+                .uint8('x')
+                .uint8('y'),
+            'items'))
+    .uint8('foo')
+    ```
+
+
 ### Full encode/decode example
 
 Example of type safe encode/decode functions for an interface:
