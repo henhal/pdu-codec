@@ -547,6 +547,18 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends an
     return parser.parse(reader, popped);
   }
 
+  array<U extends ReaderResult, E extends EmptyObject>(
+      conditions: PduParserRepeatConditions | true,
+      sequence: PduParserRepeatSequence<EmptyObject, E, PushedStack<S, V>>,
+      reader: Reader<E[], U, V, this>
+  ): PduParser<Merge<V & ReaderValue<U>>, S>;
+
+  array<K extends string, E extends EmptyObject>(
+      conditions: PduParserRepeatConditions | true,
+      sequence: PduParserRepeatSequence<EmptyObject, E, PushedStack<S, V>>,
+      propertyName: K
+  ): PduParser<Merge<V & Record<K, E[]>>, S>;
+
   array<U extends ReaderResult, K extends string, E extends EmptyObject>(
       conditions: PduParserRepeatConditions | true,
       sequence: PduParserRepeatSequence<EmptyObject, E, PushedStack<S, V>>,
@@ -570,4 +582,3 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends an
     return this.parse<E[], U, K>(reader, items);
   }
 }
-
