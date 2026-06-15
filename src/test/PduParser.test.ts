@@ -354,5 +354,21 @@ describe('PduParser tests', () => {
           .value;
       expect(value).toEqual({temperature: 23, humidity: 27, co2: 703});
     });
+
+    it('Should parse into array', () => {
+      const {value} = PduParser.parse('0501420243034404450546', {endian: Endian.LITTLE})
+          .uint8((times, _, parser) =>
+              parser.array({times}, p => p
+                      .uint8('id')
+                      .uint8('val'),
+                  'items'));
+      expect(value.items).toEqual(
+          Array(5)
+              .fill(0)
+              .map((_, i) => ({
+                id: i + 1,
+                val: i + 66
+              })));
+    });
   })
 });

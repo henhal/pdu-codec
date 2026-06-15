@@ -97,13 +97,23 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends an
 
   private stack: S;
 
-  private constructor(hex: Hex, options: PduParserOptions<V>) {
+  private constructor(buf: Hex | Buffer, options: PduParserOptions<V>) {
     const {target, endian} = options;
-    this.buf = ByteBuffer.wrap(hex, 'hex', endian === Endian.LITTLE, false);
+    this.buf = ByteBuffer.wrap(buf, 'hex', endian === Endian.LITTLE, false);
     this.value = target;
     this.stack = [] as any;
     this.endian = endian;
   }
+
+  /**
+   * Create a parser from the given buffer
+   * @param buf Buffer
+   * @param options Options
+   * @param [options.target = {}] Initial target object
+   * @param [options.endian = Endian.BIG] Endian
+   * @returns PduParser for the given data
+   */
+  static parse<T extends EmptyObject = EmptyObject>(buf: Buffer, options?: Partial<PduParserOptions<T>>): PduParser<T>;
 
   /**
    * Create a parser from the given hex string
@@ -113,13 +123,15 @@ export default class PduParser<V extends EmptyObject = EmptyObject, S extends an
    * @param [options.endian = Endian.BIG] Endian
    * @returns PduParser for the given data
    */
-  static parse<T extends EmptyObject = EmptyObject>(hex: string, options: Partial<PduParserOptions<T>> = {}): PduParser<T> {
+  static parse<T extends EmptyObject = EmptyObject>(hex: string, options?: Partial<PduParserOptions<T>>): PduParser<T>;
+
+  static parse<T extends EmptyObject = EmptyObject>(buf: string | Buffer, options: Partial<PduParserOptions<T>> = {}): PduParser<T> {
     const {
       target = {} as T,
       endian = Endian.BIG
     } = options;
 
-    return new PduParser(hex, {target, endian});
+    return new PduParser(buf, {target, endian});
   }
 
   private fail(message?: string): never {
