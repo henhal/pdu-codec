@@ -55,6 +55,10 @@ describe('PduParser tests', () => {
           .toEqual({x: 'abcdef'});
       expect(PduParser.parse('abcdef').hex('x', {length: 3, lengthBits: 0}).value)
           .toEqual({x: 'abcdef'});
+
+      expect(PduParser.parse('abcdef').hex('x', p => ({length: p.remaining})).value)
+          .toEqual({x: 'abcdef'});
+
     });
   });
 

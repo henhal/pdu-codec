@@ -1,14 +1,14 @@
 # PDU codec
 A codec for easily converting between JavaScript objects and binary PDUs, with full TypeScript typings.
 
-## Installation
+# Installation
 
 ```
 $ npm install pdu-codec
 ```
-## Usage
+# Usage
 
-### Building PDUs
+## Building PDUs
 
 Example of building a PDU from some bytes, strings, 16-bit words and hex data:
 
@@ -59,7 +59,7 @@ const pdu = new PduBuilder()
   .build()
 ```
 
-### Parsing PDUs
+## Parsing PDUs
 
 ```
 import {PduParser} from 'pdu-codec'; 
@@ -194,10 +194,21 @@ PduParser.parse('041111222233334444FF')
                 .uint8('y'),
             'items'))
     .uint8('foo')
-    ```
+```
 
+### Parser options
 
-### Full encode/decode example
+Options passed to `string`, `hex`, `repeat` and `array` may also be thunked,
+meaning a function that returns the options may be passed. This is useful
+if the option values depends on the current state of the parser:
+
+```
+PduParser.parse('11223344FF')
+  .hex('foo', p => ({length: p.remaining - 1}))
+  .uint8('tag');
+```
+
+## Full encode/decode example
 
 Example of type safe encode/decode functions for an interface:
 
