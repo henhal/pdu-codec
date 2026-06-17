@@ -1,5 +1,6 @@
-import PduParser, { asBuffer } from '../PduParser';
+import PduParser from '../PduParser';
 import { Endian } from '../types';
+import { asBuffer } from '../utils';
 
 describe('PduParser tests', () => {
   describe('reading numbers', () => {

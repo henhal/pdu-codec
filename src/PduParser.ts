@@ -69,16 +69,6 @@ export class PduParserError extends Error {
 }
 
 /**
- * Convenience function to return read hex as a buffer instead
- * @param propertyName
- */
-export function asBuffer<K extends string>(propertyName: K): Reader<Hex, {[P in K]: Buffer}, any, any> {
-  return hex => ({
-    [propertyName]: Buffer.from(hex, 'hex')
-  } as {[P in K]: Buffer});
-}
-
-/**
  * A PDU parser with chainable read methods building an object from the merged objects
  * returned from each reader callback.
  * All read methods may either be given a property name to write the result to, or a reader callback.
