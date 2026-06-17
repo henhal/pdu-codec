@@ -1,4 +1,4 @@
-import PduParser from '../PduParser';
+import PduParser, { asBuffer } from '../PduParser';
 import { Endian } from '../types';
 
 describe('PduParser tests', () => {
@@ -59,6 +59,8 @@ describe('PduParser tests', () => {
       expect(PduParser.parse('abcdef').hex('x', p => ({length: p.remaining})).value)
           .toEqual({x: 'abcdef'});
 
+      expect(PduParser.parse('abcdef').hex(asBuffer('buf'), {length: 3}).value)
+          .toEqual({buf: Buffer.from('abcdef', 'hex')});
     });
   });
 
